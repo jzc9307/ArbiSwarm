@@ -1,39 +1,63 @@
+"""Small Streamlit client kept for lecturers who prefer the original demo format."""
 import streamlit as st
-from filters import load_listings, hard_filter
+
+from filters import hard_filter, load_listings
+import marketplaces as marketplace_service
+import notify
 from orchestrator import run_swarm
+from schemas import Listing
 
-st.set_page_config(page_title="Arbitrage Swarm", layout="wide")
-st.title("🧠 E-Commerce Arbitrage Swarm")
-st.caption("Carousell Malaysia · Hard-filter → 3-agent swarm → negotiation output")
+st.set_page_config(page_title="ArbiSwarm", layout="wide")
+st.title("ArbiSwarm")
+st.caption("Verified source → deterministic filter → three-agent decision")
 
-# NOTE: resale_estimate is hardcoded per-search for the hackathon demo.
-# Full version should pull a real market-average price (e.g. average of top N sold listings).
-resale_estimate = st.number_input("Estimated resale price (RM)", value=90.0, step=5.0)
+query = st.text_input("Item", value="Labubu Macaron")
+resale_estimate = st.number_input("Expected resale price (RM)", min_value=1.0, value=90.0)
+max_price = st.number_input("Maximum purchase price (RM)", min_value=1.0, value=60.0)
+source_mode = st.radio("Data source", ["Live market", "Demo snapshot"], horizontal=True)
+selected_marketplaces = st.multiselect(
+    "Marketplaces",
+    ["carousell", "lazada", "mudah", "shopee"],
+    default=["carousell", "lazada", "mudah", "shopee"],
+    disabled=source_mode != "Live market",
+)
 
-if st.button("🐝 Start Swarm"):
-    listings = load_listings()
-    kept, discarded = hard_filter(listings)
+if st.button("Run analysis", type="primary"):
+    try:
+        if source_mode == "Live market":
+            raw, counts, errors = marketplace_service.search_many(query, selected_marketplaces, 12)
+            listings = [Listing(**item) for item in raw]
+            for error in errors:
+                st.warning(f"{error['marketplace']}: {error['message']}")
+        else:
+            listings = load_listings(query=query)
+    except (marketplace_service.MarketplaceSearchError, ValueError) as exc:
+        st.error(str(exc))
+        st.stop()
 
-    st.subheader(f"Phase 1: Hard-Filter — kept {len(kept)}/{len(listings)}")
+    kept, discarded = hard_filter(listings, query=query, max_price=max_price)
+    st.info(f"Analyzing {len(kept)} of {len(listings)} source records")
     if discarded:
-        with st.expander("Discarded listings"):
+        with st.expander(f"{len(discarded)} filtered out"):
             st.json(discarded)
 
-    st.subheader("Phase 2 & 3: Swarm decisions")
     for listing in kept:
-        with st.status(f"Processing {listing.title}...", expanded=True) as status:
-            st.write("🔎 Agent 1 (Context Analyst) reading description...")
-            st.write("👁️ Agent 2 (Vision Authenticator) checking photos...")
-            st.write("🧭 Agent 3 (Lead Strategist) deciding...")
-            decision = run_swarm(listing, resale_estimate)
-            status.update(label=f"{listing.title} — done", state="complete")
-
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            st.metric("Margin", f"{decision.estimated_margin_pct}%")
-            st.write("✅ Profitable" if decision.is_profitable else "❌ Pass")
-        with col2:
-            st.write("**Reasoning:**", decision.reasoning)
+        decision, analysis, vision = run_swarm(listing, resale_estimate, include_evidence=True)
+        with st.container(border=True):
+            st.subheader(listing.title)
+            a, b, c = st.columns(3)
+            a.metric("Ask", f"RM{listing.price:.2f}")
+            b.metric("Expected profit", f"RM{decision.estimated_profit_myr:.2f}")
+            c.metric("Margin", f"{decision.estimated_margin_pct:.1f}%")
+            st.write("**BUY SIGNAL**" if decision.is_profitable else "**PASS**")
+            st.write(decision.reasoning)
+            st.caption(
+                f"Context: {analysis.true_condition} · Vision: "
+                f"{vision.consistency_score if vision.consistency_score is not None else 'not scored'} · "
+                f"Risk: {decision.risk_level}"
+            )
             if decision.negotiation_message:
-                st.text_area("Negotiation message", decision.negotiation_message, key=listing.id)
-        st.divider()
+                st.code(decision.negotiation_message, language=None)
+            st.link_button("Open real listing", listing.url)
+            if decision.is_profitable and notify.send_telegram_alert(listing, decision):
+                st.caption("Alert sent to Telegram")

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Evidence-first Malaysian marketplace arbitrage analysis.">
+  <title>ArbiSwarm — Deal intelligence</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="ArbiSwarm home">
+      <span class="brand-mark" aria-hidden="true">AS</span>
+      <span>ArbiSwarm</span>
+    </a>
+    <div class="topbar-actions">
+      <button id="historyBtn" class="history-button" type="button" aria-controls="historyDrawer" aria-expanded="false">
+        <span class="history-icon" aria-hidden="true">↶</span>
+        History
+        <b id="historyCount" hidden>0</b>
+      </button>
+      <div class="system-state" id="systemState">
+        <span class="state-dot"></span>
+        <span>Checking system</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">EVIDENCE-FIRST RECOMMERCE</p>
+        <h1>Find the margin.<br><span>See the risk.</span></h1>
+        <p class="hero-text">Search Malaysian marketplaces at once, reject weak data, and let three focused agents turn the survivors into defensible buy decisions.</p>
+      </div>
+      <ol class="pipeline" aria-label="Analysis pipeline">
+        <li><span>01</span><div><strong>Ingest</strong><small>Real listing URLs only</small></div></li>
+        <li><span>02</span><div><strong>Inspect</strong><small>Text, photos, seller signals</small></div></li>
+        <li><span>03</span><div><strong>Decide</strong><small>Deterministic margin rules</small></div></li>
+      </ol>
+    </section>
+
+    <section class="search-shell" aria-labelledby="searchTitle">
+      <div class="search-heading">
+        <div>
+          <p class="section-label">NEW SEARCH</p>
+          <h2 id="searchTitle">Build a deal thesis</h2>
+        </div>
+        <div class="source-switch" role="radiogroup" aria-label="Data source">
+          <label><input type="radio" name="sourceMode" value="live" checked><span>Live market</span></label>
+          <label><input type="radio" name="sourceMode" value="demo"><span>Demo data</span></label>
+        </div>
+      </div>
+
+      <p id="sourceNote" class="source-note">Search four Malaysian marketplaces in one run. A failed source is reported and never replaced with fake results.</p>
+
+      <div id="marketplacePicker" class="marketplace-picker" aria-label="Marketplaces to search">
+        <label><input type="checkbox" name="marketplace" value="carousell" checked><span><i class="market-dot carousell"></i>Carousell</span></label>
+        <label><input type="checkbox" name="marketplace" value="lazada" checked><span><i class="market-dot lazada"></i>Lazada</span></label>
+        <label><input type="checkbox" name="marketplace" value="mudah" checked><span><i class="market-dot mudah"></i>Mudah</span></label>
+        <label><input type="checkbox" name="marketplace" value="shopee" checked><span><i class="market-dot shopee"></i>Shopee</span></label>
+      </div>
+
+      <form id="searchForm" class="search-form">
+        <label class="field field-query">
+          <span>What are you hunting?</span>
+          <input id="query" name="query" type="search" value="Labubu Macaron" placeholder="e.g. Sony WH-1000XM5" minlength="2" maxlength="120" required autocomplete="off">
+        </label>
+        <label class="field">
+          <span>Expected resale</span>
+          <div class="money-input"><b>RM</b><input id="resale" name="resale" type="number" value="90" min="1" step="1" required></div>
+        </label>
+        <label class="field">
+          <span>Max buy price</span>
+          <div class="money-input"><b>RM</b><input id="maxPrice" name="maxPrice" type="number" value="60" min="1" step="1"></div>
+        </label>
+        <button id="startBtn" class="primary-button" type="submit">
+          <span>Run analysis</span><i aria-hidden="true">→</i>
+        </button>
+      </form>
+    </section>
+
+    <section id="runPanel" class="run-panel" hidden aria-live="polite">
+      <div class="run-copy">
+        <span class="loader" aria-hidden="true"></span>
+        <div><strong id="runTitle">Searching the market</strong><p id="runText">Verifying listing sources before analysis.</p></div>
+      </div>
+      <div class="run-track"><span id="runProgress"></span></div>
+    </section>
+
+    <section id="errorPanel" class="error-panel" hidden role="alert">
+      <div><span class="error-icon">!</span></div>
+      <div><strong id="errorTitle">Search could not run</strong><p id="errorText"></p></div>
+      <button id="useDemoBtn" type="button">Try demo data</button>
+    </section>
+
+    <section id="sourceWarnings" class="source-warnings" hidden aria-live="polite">
+      <strong>Some marketplaces could not be searched</strong>
+      <ul id="sourceWarningList"></ul>
+    </section>
+
+    <section id="summary" class="summary" hidden aria-label="Search summary">
+      <article><small>SOURCE RESULTS</small><strong id="totalMetric">0</strong></article>
+      <article><small>ANALYZED</small><strong id="keptMetric">0</strong></article>
+      <article><small>BUY SIGNALS</small><strong id="buyMetric">0</strong></article>
+      <article><small>BEST PROFIT</small><strong id="profitMetric">—</strong></article>
+    </section>
+
+    <section id="resultsSection" class="results-section" hidden>
+      <div class="results-heading">
+        <div><p class="section-label">SWARM OUTPUT</p><h2 id="resultsTitle">Decision queue</h2></div>
+        <p id="resultsMeta"></p>
+      </div>
+      <div id="results" class="results-grid"></div>
+      <details id="discardedPanel" class="discarded" hidden>
+        <summary><span id="discardedCount">0 listings filtered out</span><i>View reasons</i></summary>
+        <ul id="discardedList"></ul>
+      </details>
+    </section>
+  </main>
+
+  <div id="historyScrim" class="history-scrim" hidden></div>
+  <aside id="historyDrawer" class="history-drawer" aria-hidden="true" aria-labelledby="historyTitle" inert>
+    <div class="history-header">
+      <div>
+        <p class="section-label">LOCAL SNAPSHOTS</p>
+        <h2 id="historyTitle">Search history</h2>
+      </div>
+      <button id="closeHistoryBtn" class="icon-button" type="button" aria-label="Close history">×</button>
+    </div>
+    <p class="history-intro">Open a saved analysis instantly. No marketplace request or AI call is made.</p>
+    <div id="historyList" class="history-list"></div>
+    <div id="historyEmpty" class="history-empty">
+      <span aria-hidden="true">↶</span>
+      <strong>No saved searches yet</strong>
+      <p>Your successful analyses will appear here.</p>
+    </div>
+    <button id="clearHistoryBtn" class="clear-history" type="button" hidden>Clear all history</button>
+  </aside>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <footer><span>ArbiSwarm</span><p>Decision support, not a guarantee of authenticity or profit.</p></footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>

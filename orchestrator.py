@@ -2,7 +2,8 @@
 Analyst -> Vision -> Strategist, with ONE conditional loop-back:
 if Analyst's confidence is low, Strategist can bounce it back for a re-read
 with the vision findings as extra context, before deciding."""
-from typing import TypedDict, Optional
+from functools import lru_cache
+from typing import TypedDict, Optional, overload, Literal
 from langgraph.graph import StateGraph, END
 
 from schemas import Listing, ContextAnalysis, VisionCheck, StrategistDecision
@@ -52,6 +53,7 @@ def route_after_vision(state: SwarmState) -> str:
     return "strategist"
 
 
+@lru_cache(maxsize=1)
 def build_graph():
     graph = StateGraph(SwarmState)
     graph.add_node("analyst", node_analyst)
@@ -70,7 +72,17 @@ def build_graph():
     return graph.compile()
 
 
-def run_swarm(listing: Listing, resale_estimate: float) -> StrategistDecision:
+@overload
+def run_swarm(listing: Listing, resale_estimate: float, include_evidence: Literal[False] = False) -> StrategistDecision: ...
+
+
+@overload
+def run_swarm(
+    listing: Listing, resale_estimate: float, include_evidence: Literal[True]
+) -> tuple[StrategistDecision, ContextAnalysis, VisionCheck]: ...
+
+
+def run_swarm(listing: Listing, resale_estimate: float, include_evidence: bool = False):
     app = build_graph()
     initial: SwarmState = {
         "listing": listing,
@@ -81,4 +93,6 @@ def run_swarm(listing: Listing, resale_estimate: float) -> StrategistDecision:
         "reanalysis_done": False,
     }
     final_state = app.invoke(initial)
+    if include_evidence:
+        return final_state["decision"], final_state["analysis"], final_state["vision"]
     return final_state["decision"]

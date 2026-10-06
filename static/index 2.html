@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arbitrage Swarm</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="glow"></div>
+
+  <main class="container">
+    <section class="hero">
+      <h1>Find the deal before anyone else does.</h1>
+      <p class="subtitle">A swarm of agents reads every listing, checks every photo,<br>and tells you exactly what to say.</p>
+    </section>
+
+    <section class="search-card">
+      <div class="field">
+        <label for="query">Item</label>
+        <input id="query" type="text" placeholder="Labubu Macaron" value="Labubu Macaron">
+      </div>
+      <div class="field field-small">
+        <label for="resale">Resale estimate (RM)</label>
+        <input id="resale" type="number" value="90" step="5">
+      </div>
+      <div class="field field-toggle">
+        <label class="toggle">
+          <input id="useLive" type="checkbox">
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          <span class="toggle-label">Live scrape</span>
+        </label>
+      </div>
+      <button id="startBtn">
+        <span class="btn-label">Start swarm</span>
+        <span class="btn-spinner" hidden></span>
+      </button>
+    </section>
+
+    <p id="status" class="status" aria-live="polite"></p>
+    <section id="results" class="results"></section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

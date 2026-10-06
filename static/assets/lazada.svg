@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 138 34" role="img" aria-labelledby="title">
+  <title id="title">Lazada</title>
+  <defs><linearGradient id="g" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#6c1ab1"/><stop offset="1" stop-color="#f7277a"/></linearGradient></defs>
+  <path d="M17 2 31 10v15L17 33 3 25V10z" fill="url(#g)"/>
+  <path d="m10 12 7-4 7 4v8l-7 4-7-4z" fill="none" stroke="#fff" stroke-width="2.5"/>
+  <text x="42" y="23" fill="#202c72" font-family="Arial,Helvetica,sans-serif" font-size="18" font-weight="700">Lazada</text>
+</svg>

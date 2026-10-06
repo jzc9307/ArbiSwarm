@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 34" role="img" aria-labelledby="title">
+  <title id="title">Mudah.my</title>
+  <rect width="34" height="34" rx="10" fill="#009b4e"/>
+  <path d="M8 23V12h4l5 6 5-6h4v11h-4v-6l-5 6-5-6v6z" fill="#fff"/>
+  <text x="42" y="23" fill="#007f42" font-family="Arial,Helvetica,sans-serif" font-size="18" font-weight="700">mudah</text>
+  <circle cx="102" cy="21" r="2" fill="#f58220"/>
+  <text x="106" y="23" fill="#f58220" font-family="Arial,Helvetica,sans-serif" font-size="12" font-weight="700">my</text>
+</svg>

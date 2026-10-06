@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 34" role="img" aria-labelledby="title">
+  <title id="title">Carousell</title>
+  <rect width="34" height="34" rx="10" fill="#ff5a5f"/>
+  <circle cx="17" cy="17" r="8.5" fill="none" stroke="#fff" stroke-width="4"/>
+  <circle cx="17" cy="17" r="2.5" fill="#fff"/>
+  <text x="43" y="23" fill="#9f2f35" font-family="Arial,Helvetica,sans-serif" font-size="17" font-weight="700">Carousell</text>
+</svg>
