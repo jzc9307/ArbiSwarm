@@ -41,6 +41,20 @@ class VariantProfile:
     edition: str | None
     character: str | None
     tokens: set[str]
+    model_ids: tuple[str, ...] = ()
+    format: str | None = None
+    season: str | None = None
+    audience: str | None = None
+    style: str | None = None
+
+
+def lego_model_ids(text: str) -> tuple[str, ...]:
+    # Piece counts, years and prices are not set numbers. Only LEGO/Star Wars
+    # context enables this detector; counts followed by pcs/pieces are ignored.
+    text = re.sub(r'(lego)(?=\d{5}\b)', r'\1 ', text, flags=re.I)
+    if not re.search(r"lego|star\s*wars|falcon", text, re.I):
+        return ()
+    return tuple(sorted(set(re.findall(r"\b([1-9]\d{4})\b(?!\s*(?:pcs|pieces))", text, re.I))))
 
 
 @dataclass
@@ -66,6 +80,17 @@ def profile_variant(title: str) -> VariantProfile:
     edition_match = re.search(r"\b(?:v|version)\s*([1-9])\b", lowered)
     edition = f"V{edition_match.group(1)}" if edition_match else None
     character = next((phrase.title() for phrase in CHARACTER_PHRASES if phrase in lowered), None)
+    model_ids = lego_model_ids(title)
+    lego = bool(re.search(r"lego|star\s*wars|falcon", lowered))
+    format = ('small' if re.search(r"\b(?:mini|micro|midi|small|miniature)\b", lowered)
+              else 'ucs' if re.search(r"\bucs\b|ultimate collector|\bbig version\b|\blarge (?:model|version)\b", lowered) else None)
+    season_match = re.search(r"\b(\d{2})\s*[/\-]\s*(\d{2})\b", lowered)
+    season = '/'.join(season_match.groups()) if season_match else None
+    audience = ('kids' if re.search(r"\b(?:kids?|children|junior|youth)\b", lowered)
+                else 'women' if re.search(r"\bwom[ae]n|\bladies\b", lowered)
+                else 'men' if re.search(r"\bmen|\badult\b", lowered) else None)
+    styles = [word for word in ('home', 'away', 'third') if re.search(r'\b' + word + r'\b', lowered)]
+    style = styles[0] if len(styles) == 1 else ('mixed' if styles else None)
 
     accessory = bool(tokens & ACCESSORY_WORDS) and not ("blind" in tokens and "box" in tokens)
     compatible = bool(tokens & COMPATIBLE_WORDS) or "compatible with" in lowered
@@ -73,18 +98,34 @@ def profile_variant(title: str) -> VariantProfile:
         "full set" in lowered or "whole set" in lowered or "complete set" in lowered
         or bool(re.search(r"\b(?:6|12)\s*(?:pcs|pieces|boxes)\b", lowered))
     )
-    if explicit_full_set and not compatible:
+    figure_mention = bool(re.search(r"\bmini\s*fig(?:ure)?s?\b|\bfigures? only\b", lowered))
+    included_figures = re.search(r"\b(?:with|includes?|including)\s+(?:\d+\s+)?minifig", lowered)
+    minifigure_only = lego and figure_mention and not (
+        included_figures or (explicit_full_set and not re.search(r'\bonly\b',lowered))
+    )
+    incomplete = lego and bool(re.search(r"\bincomplete\b|\bmissing (?:parts|pieces|minifigures)\b|\bparts only\b|\b(?:no|without) minifig", lowered))
+    if incomplete:
+        minifigure_only = False
+    if accessory:
+        kind, label = 'accessory', 'Accessory'
+        warning = 'Accessory listing—do not compare it with the main product.'
+    elif compatible:
+        kind, label = 'compatible', 'Compatible / third-party'
+        warning = 'Third-party or compatible product—not equivalent to the original branded item.'
+    elif minifigure_only:
+        kind, label = 'minifigure', 'Minifigure / figures only'
+        warning = 'Figures are not the complete building set.'
+    elif incomplete:
+        kind, label = 'incomplete', 'Incomplete / parts'
+        warning = 'Missing parts; complete-set prices are not comparable.'
+    elif lego and (model_ids or 'falcon' in tokens):
+        kind = 'small_model' if format == 'small' else 'building_set'
+        label = ('Small-scale model' if format == 'small' else 'Building set') + (f" · {', '.join(model_ids)}" if model_ids else '')
+        warning = 'Title-based identity only; confirm the set number and included pieces.'
+    elif explicit_full_set:
         kind = "full_set"
         label = "Full set"
         warning = "Full-set pricing is isolated from single boxes and characters."
-    elif accessory:
-        kind = "accessory"
-        label = "Accessory"
-        warning = "Accessory listing—do not compare it with the main collectible."
-    elif compatible:
-        kind = "compatible"
-        label = "Compatible / third-party"
-        warning = "Third-party or compatible product—not equivalent to the original branded item."
     elif tokens & SINGLE_WORDS or character:
         kind = "single"
         label = character or "Single / confirmed item"
@@ -106,16 +147,65 @@ def profile_variant(title: str) -> VariantProfile:
         edition=edition,
         character=character,
         tokens=tokens,
+        model_ids=model_ids, format=format, season=season, audience=audience, style=style,
     )
+
+
+def description_product_kind(description: str) -> str | None:
+    if re.search(r'\b(?:only\s+mini\s*fig(?:ure)?s?|mini\s*fig(?:ure)?s?\s+only)\b',description,re.I):
+        return 'minifigure'
+    if re.search(r'\b(?:only (?:lighting|led) kit|(?:lighting|led) kit only|display (?:case|stand) only)\b',description,re.I):
+        return 'accessory'
+    if re.search(r'\bincomplete\b|\bmissing (?:parts|pieces|minifigures)\b',description,re.I):
+        return 'incomplete'
+    return None
+
+
+def identity_reason(title: str, query: str, description: str = '') -> str | None:
+    """Conservative exact-product intent checks; never authenticate a product."""
+    wanted, actual = profile_variant(query), profile_variant(title)
+    stated_kind = description_product_kind(description)
+    if wanted.model_ids:
+        if actual.model_ids != wanted.model_ids:
+            return f"set number does not match {', '.join(wanted.model_ids)} in the title"
+        if wanted.kind == 'building_set' and actual.kind != 'building_set':
+            return f"{actual.label}: not the requested complete building set"
+        if wanted.kind == 'building_set' and stated_kind:
+            return f"seller description states {stated_kind}: not the requested complete building set"
+    elif wanted.format == 'ucs' and actual.kind in {'small_model', 'minifigure', 'accessory', 'incomplete'}:
+        return f"{actual.label}: not the requested UCS/main model"
+    if wanted.season and actual.season != wanted.season:
+        return f"season {wanted.season} is not established in the title"
+    if wanted.style and wanted.style != 'mixed' and actual.style != wanted.style:
+        return f"{wanted.style} variant is not established in the title"
+    if wanted.audience and actual.audience != wanted.audience:
+        return f"{wanted.audience} sizing is not established in the title"
+    size = re.search(r"\b(?:size\s+(XS|S|M|L|XL|XXL|\dXL)|\b(XS|S|M|L|XL|XXL|\dXL)\s+size)\b", query, re.I)
+    if size:
+        value = next(bit for bit in size.groups() if bit).lower()
+        if not re.search(r'\b' + re.escape(value) + r'\b', title, re.I):
+            return f"size {value.upper()} is not confirmed in the title"
+    return None
 
 
 def _similar(left: VariantProfile, right: VariantProfile) -> bool:
     if left.kind != right.kind:
         return False
-    if left.edition and right.edition and left.edition != right.edition:
+    # An exact model code beats fuzzy title overlap. Missing or multiple model
+    # codes never inherit another model's valuation.
+    if left.model_ids != right.model_ids:
         return False
-    if left.character and right.character and left.character != right.character:
+    for field_name in ('season', 'audience', 'style'):
+        if getattr(left, field_name) != getattr(right, field_name):
+            return False
+    if left.format and right.format and left.format != right.format:
         return False
+    if left.edition != right.edition:
+        return False
+    if left.character != right.character:
+        return False
+    if len(left.model_ids) == 1 and left.kind == 'building_set':
+        return True
     union = left.tokens | right.tokens
     score = len(left.tokens & right.tokens) / len(union) if union else 0
     return score >= 0.28
@@ -125,13 +215,18 @@ def group_listings(listings: list[Listing], query: str) -> list[ListingGroup]:
     groups: list[ListingGroup] = []
     for listing in listings:
         profile = profile_variant(listing.title)
+        stated_kind = description_product_kind(listing.description)
+        if stated_kind and profile.kind == 'building_set':
+            profile.kind = stated_kind
+            profile.label = {'minifigure':'Minifigures only', 'accessory':'Accessory', 'incomplete':'Incomplete / parts'}[stated_kind]
+            profile.warning = 'Seller description indicates a different product scope; complete-set prices are not comparable.'
         match = next((group for group in groups if _similar(profile, group.profile)), None)
         if match:
             match.listings.append(listing)
             if len(listing.title) < len(match.name):
                 match.name = listing.title
             continue
-        signature = f"{query.lower()}|{profile.kind}|{profile.edition}|{profile.character}|{' '.join(sorted(profile.tokens))}"
+        signature = f"{query.lower()}|{profile.kind}|{profile.model_ids}|{profile.format}|{profile.season}|{profile.audience}|{profile.style}|{profile.edition}|{profile.character}|{' '.join(sorted(profile.tokens))}"
         groups.append(ListingGroup(
             group_id=sha1(signature.encode("utf-8")).hexdigest()[:12],
             name=listing.title,

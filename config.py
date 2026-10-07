@@ -12,7 +12,8 @@ load_dotenv(BASE_DIR / ".env", override=False)
 
 # Optional AI enhancement. The deterministic pipeline still works without it.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-CHEAP_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+CHEAP_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.8-flash")
 
 # Optional reliable Carousell data provider. If unset, the app attempts a direct
 # browser scrape and reports anti-bot blocks honestly instead of returning fake data.

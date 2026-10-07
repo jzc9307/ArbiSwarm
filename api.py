@@ -16,10 +16,12 @@ import notify
 from intelligence import group_listings, price_band, seller_confidence
 from orchestrator import run_swarm
 from schemas import Listing
+from copilot import ChatRequest, chat
+from agents._llm import ai_status
 
 logger = logging.getLogger("arbiswarm")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.3.0"
 app = FastAPI(title="ArbiSwarm API", version=APP_VERSION)
 
 
@@ -35,6 +37,7 @@ async def prevent_stale_app_assets(request: Request, call_next):
 class SearchRequest(BaseModel):
     query: str = Field(min_length=2, max_length=120)
     pricing_mode: Literal["auto", "manual"] = "manual"
+    match_mode: Literal['exact', 'related'] = 'exact'
     resale_estimate: Optional[float] = Field(default=None, gt=0, le=1_000_000)
     max_purchase_price: Optional[float] = Field(default=None, gt=0, le=1_000_000)
     source_mode: Literal["live", "demo"] = "live"
@@ -43,6 +46,8 @@ class SearchRequest(BaseModel):
         min_length=1,
         max_length=4,
     )
+    retained_market_listings: list[Listing] = Field(default_factory=list, max_length=200)
+    retained_source_times: dict[str, datetime] = Field(default_factory=dict)
 
     @field_validator("query")
     @classmethod
@@ -130,6 +135,8 @@ class SearchResponse(BaseModel):
     source_mode: str
     provider: str
     pricing_mode: str
+    match_mode: str = 'exact'
+    matching_version: int = 2
     collected_at: datetime
     marketplaces: list[str]
     source_counts: dict[str, int]
@@ -140,6 +147,7 @@ class SearchResponse(BaseModel):
     discarded: list[dict]
     decisions: list[DecisionOut]
     product_groups: list[ProductGroupOut]
+    market_listings: list[Listing] = Field(default_factory=list)
 
 
 @app.get("/api/health")
@@ -148,6 +156,7 @@ def health() -> dict:
         "ok": True,
         "version": APP_VERSION,
         "ai_mode": "gemini" if config.GEMINI_API_KEY else "deterministic",
+        "ai_status": ai_status(),
         "marketplaces": {
             "carousell": "reef_api" if config.REEF_API_KEY else "direct_browser",
             "lazada": "public_json",
@@ -155,6 +164,11 @@ def health() -> dict:
             "shopee": "nexscope_api" if config.NEXSCOPE_API_KEY else "public_browser_best_effort",
         },
     }
+
+
+@app.post("/api/chat")
+def copilot_chat(req: ChatRequest) -> dict:
+    return chat(req)
 
 
 @app.post("/api/search", response_model=SearchResponse)
@@ -195,6 +209,15 @@ def search(req: SearchRequest) -> SearchResponse:
         source_counts = {"carousell": len(listings)}
         source_errors = []
 
+    # A source refresh carries the other sources' original records, including
+    # above-budget comparables. Run the same matching/valuation pipeline again.
+    if req.source_mode == "live" and req.retained_market_listings:
+        retained = [item for item in req.retained_market_listings if item.marketplace not in req.marketplaces]
+        listings.extend(retained)
+        for market in sorted({item.marketplace for item in retained}):
+            source_counts[market] = sum(item.marketplace == market for item in retained)
+        searched_marketplaces = list(dict.fromkeys(req.marketplaces + [item.marketplace for item in retained]))
+    listings = list({f"{item.marketplace}:{item.id}": item for item in listings}.values())
     collected_at = datetime.now(timezone.utc)
     # Keep a broad, validated comparison pool for fair-value estimation, then
     # apply the user's acquisition ceiling only to actionable offers.
@@ -205,6 +228,7 @@ def search(req: SearchRequest) -> SearchResponse:
         listings,
         query=req.query,
         max_price=float("inf"),
+        match_mode=req.match_mode,
     )
     kept, price_discarded = hard_filter(
         market_pool,
@@ -244,6 +268,18 @@ def search(req: SearchRequest) -> SearchResponse:
             continue
 
         trust = seller_confidence(listing, resale_estimate, analysis.red_flags)
+        evidence_hold = None
+        if req.pricing_mode == 'auto' and resale_confidence == 'low':
+            evidence_hold = 'Not enough consistent comparable asking prices to recommend a buy.'
+        if req.pricing_mode == 'auto' and resale_sample_size >= 3 and listing.price < resale_estimate * 0.35:
+            evidence_hold = 'Ask is far below the comparison median. Confirm the exact item and included parts before treating this as a deal; price alone does not prove a fake.'
+        if group.profile.kind in {'unclear', 'incomplete'} and req.pricing_mode == 'auto':
+            evidence_hold = 'Product/pack identity is not established well enough for a buy recommendation.'
+        if evidence_hold:
+            decision.is_profitable = False
+            decision.risk_level = 'high'
+            decision.negotiation_message = None
+            decision.reasoning = f'Needs verification: {evidence_hold} The displayed profit is hypothetical, not a buy signal.'
         factors = [
             "Product URL and marketplace provenance validated.",
             (
@@ -262,6 +298,8 @@ def search(req: SearchRequest) -> SearchResponse:
         ]
         if group.profile.warning:
             factors.append(group.profile.warning)
+        if evidence_hold:
+            factors.append(evidence_hold)
 
         decisions.append(
             DecisionOut(
@@ -306,7 +344,7 @@ def search(req: SearchRequest) -> SearchResponse:
                 platform_fee_myr=round(resale_estimate * config.PLATFORM_FEE_PCT, 2),
                 shipping_cost_myr=config.SHIPPING_COST_MYR,
                 decision_factors=factors,
-                collected_at=collected_at,
+                collected_at=req.retained_source_times.get(listing.marketplace, collected_at) if listing.marketplace not in req.marketplaces else collected_at,
             )
         )
         if decision.is_profitable:
@@ -319,7 +357,9 @@ def search(req: SearchRequest) -> SearchResponse:
         if not offers:
             continue
         band = group_bands[group.group_id]
-        prices = [item.price for item in group.listings]
+        # The displayed offer range must describe the displayed budget-filtered
+        # cards. Valuation still uses the full comparison pool above.
+        prices = [item.price for item in offers]
         markets = sorted({item.marketplace for item in offers})
         product_groups.append(ProductGroupOut(
             group_id=group.group_id,
@@ -349,6 +389,7 @@ def search(req: SearchRequest) -> SearchResponse:
         source_mode=req.source_mode,
         provider=provider,
         pricing_mode=req.pricing_mode,
+        match_mode=req.match_mode,
         collected_at=collected_at,
         marketplaces=searched_marketplaces,
         source_counts=source_counts,
@@ -359,6 +400,7 @@ def search(req: SearchRequest) -> SearchResponse:
         discarded=discarded,
         decisions=decisions,
         product_groups=product_groups,
+        market_listings=market_pool,
     )
 
 

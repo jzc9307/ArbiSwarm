@@ -404,7 +404,10 @@ def _search_shopee_provider(query: str, limit: int) -> list[dict]:
             json={
                 "station": "MY",
                 "keyword": query,
-                "keywordType": 1,
+                # AND matching is less brittle than an exact phrase for natural
+                # searches such as "Liverpool jersey home 26/27" while the
+                # deterministic relevance filter still rejects loose results.
+                "keywordType": 2,
                 "page": 1,
                 "pageSize": limit,
             },
@@ -421,10 +424,8 @@ def _search_shopee_provider(query: str, limit: int) -> list[dict]:
     data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
     records = (data.get("products") or data.get("items") or []) if isinstance(data, dict) else []
     listings = [item for record in records if (item := _shopee_provider_record(record))]
-    if not listings:
-        if records:
-            raise MarketplaceSearchError("Nexscope returned Shopee records without valid Malaysian product URLs.")
-        raise MarketplaceSearchError("Nexscope returned zero Shopee matches for this search.")
+    if not listings and records:
+        raise MarketplaceSearchError("Nexscope returned Shopee records without valid Malaysian product URLs.")
     return listings[:limit]
 
 
@@ -492,7 +493,11 @@ def search_many(query: str, selected: list[str], total_limit: int) -> tuple[list
     unknown = [name for name in selected if name not in ADAPTERS]
     if unknown:
         raise ValueError(f"unsupported marketplaces: {', '.join(unknown)}")
-    per_source_limit = max(3, total_limit // max(1, len(selected)))
+    # Fetch the configured candidate depth from every marketplace. Dividing the
+    # limit between sources meant a four-market search saw only the first three
+    # Carousell cards, while refreshing Carousell alone saw twelve and appeared
+    # to "discover" missing results.
+    per_source_limit = max(3, total_limit)
     all_listings: list[dict] = []
     counts: dict[str, int] = {}
     errors: list[dict] = []

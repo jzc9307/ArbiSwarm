@@ -239,6 +239,26 @@ class ScraperTests(unittest.TestCase):
 
 
 class MarketplaceAdapterTests(unittest.TestCase):
+    def test_multi_market_search_keeps_full_candidate_depth_per_source(self):
+        calls = []
+
+        def fake_search(name):
+            def run(_query, limit):
+                calls.append((name, limit))
+                return []
+            return run
+
+        adapters = {name: fake_search(name) for name in ("carousell", "lazada", "mudah", "shopee")}
+        with patch.dict(marketplaces.ADAPTERS, adapters, clear=True):
+            marketplaces.search_many(
+                "Liverpool jersey home 26/27",
+                ["carousell", "lazada", "mudah", "shopee"],
+                12,
+            )
+        self.assertEqual(calls, [
+            ("carousell", 12), ("lazada", 12), ("mudah", 12), ("shopee", 12),
+        ])
+
     def test_shopee_card_maps_to_normalized_listing(self):
         class FakeImage:
             @property
@@ -324,6 +344,17 @@ class MarketplaceAdapterTests(unittest.TestCase):
         self.assertIn("-i.141942477.4048364407", rows[0]["url"])
         self.assertEqual(rows[0]["seller_name"], "LEGO Store")
         self.assertEqual(rows[0]["sold_count"], 230)
+
+    def test_shopee_zero_matches_is_not_reported_as_source_failure(self):
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"code": 0, "data": {"products": []}}
+
+        with patch.object(marketplaces.httpx, "post", return_value=FakeResponse()):
+            self.assertEqual(marketplaces._search_shopee_provider("rare query", 12), [])
 
     def test_lazada_json_maps_to_normalized_listing(self):
         class FakeResponse:

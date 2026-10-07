@@ -32,6 +32,7 @@ def _fallback_narrative(
     analysis: ContextAnalysis,
     margin: float,
     profitable: bool,
+    rejection_reasons: list[str] | None = None,
 ) -> Narrative:
     evidence = []
     if analysis.flaws_found:
@@ -47,7 +48,7 @@ def _fallback_narrative(
             negotiation_message=f"Hi! Considering {flaw}, would you be open to RM{target}? I can arrange the deal promptly.",
         )
     return Narrative(
-        reasoning=f"This listing does not clear the risk-adjusted margin rule; calculated margin is {margin:.1f}%.{evidence_text}",
+        reasoning=f"Pass: {'; '.join(rejection_reasons or ['risk or margin checks did not pass'])}. Calculated margin is {margin:.1f}%.{evidence_text}",
         negotiation_message=None,
     )
 
@@ -76,7 +77,20 @@ def decide(
         and not vision_risk
     )
     risk = "high" if hard_risk or vision_risk else ("medium" if analysis.red_flags or vision.consistency_score is None else "low")
-    narrative = _fallback_narrative(listing, analysis, margin, profitable)
+    rejection_reasons = []
+    if not listing.source_verified:
+        rejection_reasons.append("source provenance is unverified")
+    if margin < config.MIN_MARGIN_PCT_TO_ALERT or profit <= 0:
+        rejection_reasons.append("estimated profit or margin is below the required threshold")
+    if analysis.missing_parts:
+        rejection_reasons.append("missing parts were reported")
+    if len(analysis.red_flags) >= 2:
+        rejection_reasons.append("multiple risk flags were reported")
+    if retail_evidence_risk:
+        rejection_reasons.append("retail review evidence fails the existing risk rule")
+    if vision_risk:
+        rejection_reasons.append("image consistency is too low")
+    narrative = _fallback_narrative(listing, analysis, margin, profitable, rejection_reasons)
 
     if is_enabled():
         try:
@@ -84,7 +98,7 @@ def decide(
                 SYSTEM_PROMPT,
                 f"Listing: {listing.title}; asking RM{listing.price:.2f}; resale RM{resale_estimate:.2f}\n"
                 f"Total cost: RM{total_cost:.2f}; profit: RM{profit:.2f}; margin: {margin:.1f}%\n"
-                f"Passed deterministic rules: {profitable}\nContext: {analysis.model_dump_json()}\n"
+                f"Passed deterministic rules: {profitable}; rejection reasons: {rejection_reasons}\nContext: {analysis.model_dump_json()}\n"
                 f"Vision: {vision.model_dump_json()}",
                 Narrative,
             )

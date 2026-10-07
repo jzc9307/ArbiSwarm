@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Evidence-first Malaysian marketplace arbitrage analysis.">
   <title>ArbiSwarm — Deal intelligence</title>
-  <link rel="stylesheet" href="/static/style.css?v=2.1.0">
+  <link rel="stylesheet" href="/static/style.css?v=2.3.0">
+  <link rel="stylesheet" href="/static/copilot.css?v=3.0.1">
 </head>
 <body>
   <header class="topbar">
@@ -84,6 +85,7 @@
         <button id="startBtn" class="primary-button" type="submit">
           <span>Run analysis</span><i aria-hidden="true">→</i>
         </button>
+        <div class="match-settings"><label for="matchMode">Product matching</label><select id="matchMode"><option value="exact">Exact product &amp; variant</option><option value="related">Include related variants</option></select><small>Set numbers, seasons and requested sizes must match. Related items keep separate valuations.</small></div>
       </form>
     </section>
 
@@ -124,6 +126,12 @@
         <div class="results-heading-actions"><p id="resultsMeta"></p><button id="watchSearchBtn" class="watch-button" type="button">＋ Watch this search</button></div>
       </div>
       <div id="sourceBar" class="source-bar" aria-label="Marketplace freshness"></div>
+      <section class="board-filters" aria-label="Filter saved search results">
+        <div class="filter-heading"><span>Refine your board</span><small>No new crawl</small><button id="resetFilters" type="button">Reset</button></div>
+        <div id="marketFilters" class="market-filters" role="group" aria-label="Marketplace filters"></div>
+        <div class="filter-options"><label>Product type<select id="variantFilter"><option value="">All product types</option></select></label><label>Asking price up to RM<input id="viewMaxPrice" type="number" min="0.01" max="1000000" step="0.01" placeholder="Any saved price"></label><p id="filterStatus" role="status" aria-live="polite"></p></div>
+      </section>
+      <p id="resultsExplanation" class="board-explanation"></p>
       <div id="results" class="results-grid"></div>
       <details id="discardedPanel" class="discarded" hidden>
         <summary><span id="discardedCount">0 listings filtered out</span><i>View reasons</i></summary>
@@ -169,7 +177,37 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
+  <button id="copilotLauncher" class="copilot-launcher" type="button" aria-controls="copilotPanel" aria-expanded="false"><span class="copilot-spark">✦</span><span><b>Ask Arbi</b><small>Your search, in context</small></span><kbd>⌘ K</kbd></button>
+  <aside id="copilotPanel" class="copilot-panel" role="dialog" aria-labelledby="copilotTitle" hidden>
+    <header id="copilotDragArea" class="copilot-header">
+      <button id="copilotMove" class="copilot-spark" type="button" aria-label="Move chat: drag or use arrow keys; Home resets position" title="Drag to move · arrow keys also work">✦</button>
+      <div class="copilot-heading"><h2 id="copilotTitle">Ask Arbi</h2><small><i></i>Connected to your board</small></div>
+      <div class="copilot-window-controls">
+        <button id="fullscreenCopilot" class="chat-icon" type="button" aria-label="Enter fullscreen chat" aria-pressed="false" title="Fullscreen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></button>
+        <button id="closeCopilot" class="chat-icon" type="button" aria-label="Close chat" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+      </div>
+    </header>
+    <div class="copilot-context-shell">
+      <div class="copilot-context-row"><div id="copilotContext" class="copilot-context"></div><button id="copilotQuickActions" class="copilot-quick-actions" type="button" aria-expanded="false" aria-controls="copilotActionTray">Quick actions <span>⌄</span></button></div>
+      <div id="copilotSelection" class="copilot-selection" hidden><div id="selectedIdentity"></div><button class="chat-icon" type="button" aria-label="Clear selected listing">×</button></div>
+      <div id="copilotActionTray" class="copilot-action-tray" aria-hidden="true" inert><div><div id="copilotMenu" class="copilot-menu" aria-label="All workspace actions"></div></div></div>
+    </div>
+    <div id="copilotMessages" class="copilot-messages" role="log" aria-live="polite"><div id="copilotOverview" class="copilot-overview"></div></div>
+    <div id="copilotTools" class="copilot-tools" aria-label="Current search actions"></div>
+    <div id="copilotBudget" class="copilot-budget" hidden><label for="copilotBudgetValue">New purchase ceiling (RM)</label><div><input id="copilotBudgetValue" type="number" min="1" max="1000000" step="1"><button id="applyCopilotBudget" type="button">Use in message</button><button id="cancelCopilotBudget" type="button" aria-label="Cancel budget change">×</button></div></div>
+    <form id="copilotForm" class="copilot-composer"><label class="sr-only" for="copilotInput">Message Arbi</label><textarea id="copilotInput" rows="1" maxlength="2000" placeholder="Ask about your search…" required></textarea><button id="copilotSend" type="submit" aria-label="Send message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 20V4m-7 7 7-7 7 7"/></svg></button></form>
+    <p id="copilotStatus" class="copilot-status" role="status">Choose a shortcut, review your message, then send.</p>
+  </aside>
+
+  <dialog id="selectionDialog" class="selection-dialog" aria-labelledby="selectionTitle">
+    <div class="selection-dialog-heading"><span class="section-label">REVIEW THIS LISTING?</span><button id="cancelSelection" class="icon-button" type="button" aria-label="Cancel listing selection">×</button></div>
+    <div id="selectionPreview"></div>
+    <p class="selection-note">Nothing has been sent. Confirm this item to make it the focus of your workspace.</p>
+    <button id="confirmSelection" class="selection-confirm" type="button">Use this item <span>→</span></button>
+  </dialog>
+
   <footer><span>ArbiSwarm</span><p>Decision support, not a guarantee of authenticity or profit.</p></footer>
-  <script src="/static/app.js?v=2.1.0"></script>
+  <script src="/static/chat-state.js?v=3.1.0"></script>
+  <script src="/static/app.js?v=3.1.0"></script>
 </body>
 </html>
