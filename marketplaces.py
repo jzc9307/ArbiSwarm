@@ -100,9 +100,16 @@ def search_lazada(query: str, limit: int) -> list[dict]:
             follow_redirects=True,
         )
         response.raise_for_status()
-        payload = response.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        raise MarketplaceSearchError(f"Lazada search failed: {exc}") from exc
+        content_type = response.headers.get("content-type", "").lower()
+        payload = response.json() if "json" in content_type else None
+    except (httpx.HTTPError, ValueError):
+        payload = None
+
+    # Lazada sometimes returns an HTML session bootstrap to its historical JSON
+    # endpoint. A normal public browser page still exposes product cards, so use
+    # that as a transparent fallback without attempting to bypass verification.
+    if not isinstance(payload, dict):
+        return _search_lazada_browser(query, limit)
 
     records = (payload.get("mods") or {}).get("listItems") or []
     listings: list[dict] = []
@@ -146,6 +153,94 @@ def search_lazada(query: str, limit: int) -> list[dict]:
         if len(listings) >= limit:
             break
     return listings
+
+
+def _lazada_browser_card(anchor) -> dict | None:
+    raw_url = anchor.get_attribute("href") or ""
+    url = urljoin("https://www.lazada.com.my", raw_url)
+    parsed = urlparse(url)
+    if parsed.netloc not in {"lazada.com.my", "www.lazada.com.my"} or "/products/" not in parsed.path:
+        return None
+    title = " ".join((anchor.inner_text() or "").split())
+    if not title:
+        return None
+    # Current Lazada cards place the title link three wrappers below the full
+    # result card. Use content semantics (price/image) rather than class names,
+    # which are generated and change frequently.
+    card = anchor.locator("xpath=../../..").first
+    text = "\n".join(part.strip() for part in (card.inner_text() or "").splitlines() if part.strip())
+    price = _price_from_text(text)
+    if price is None:
+        return None
+    image = card.locator("img").first
+    image_url = image.get_attribute("src") if image.count() else None
+    sold_match = re.search(r"([\d,.]+\s*[kKmM]?)\s+sold", text, re.I)
+    review_match = re.search(r"\(([\d,.]+\s*[kKmM]?)\)", text)
+    item_match = re.search(r"-i(\d+)\.html", parsed.path)
+    return {
+        "id": item_match.group(1) if item_match else parsed.path,
+        "title": title[:300],
+        "price": price,
+        "description": text[:1200],
+        "image_urls": _images(image_url),
+        "seller_rating": None,
+        "seller_name": None,
+        "listing_rating": None,
+        "review_count": _integer(review_match.group(1)) if review_match else None,
+        "sold_count": _integer(sold_match.group(1)) if sold_match else None,
+        "url": url,
+        "condition": "New retail listing",
+        "marketplace": "lazada",
+        "source": "lazada_live",
+        "source_verified": True,
+    }
+
+
+def _search_lazada_browser(query: str, limit: int) -> list[dict]:
+    search_url = f"https://www.lazada.com.my/catalog/?q={quote(query)}"
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page(
+                user_agent=carousell.USER_AGENT,
+                viewport={"width": 1440, "height": 1200},
+                locale="en-MY",
+            )
+            try:
+                page.goto(search_url, wait_until="domcontentloaded", timeout=45_000)
+                page.wait_for_timeout(3_000)
+                body = page.locator("body").inner_text()
+                blocked_terms = ("captcha", "verify you are human", "security verification", "unusual traffic")
+                if any(term in body.lower() for term in blocked_terms):
+                    raise MarketplaceSearchError(
+                        "Lazada requested human verification. ArbiSwarm will not bypass that challenge."
+                    )
+                anchors = page.locator("a")
+                listings: list[dict] = []
+                seen: set[str] = set()
+                for index in range(anchors.count()):
+                    anchor = anchors.nth(index)
+                    if "/products/" not in (anchor.get_attribute("href") or ""):
+                        continue
+                    item = _lazada_browser_card(anchor)
+                    if item and item["id"] not in seen:
+                        seen.add(item["id"])
+                        listings.append(item)
+                    if len(listings) >= limit:
+                        break
+                if not listings:
+                    raise MarketplaceSearchError(
+                        "Lazada returned no readable public product cards. Try again later."
+                    )
+                return listings
+            finally:
+                browser.close()
+    except MarketplaceSearchError:
+        raise
+    except PlaywrightTimeoutError as exc:
+        raise MarketplaceSearchError("Lazada timed out before public results loaded.") from exc
+    except Exception as exc:
+        raise MarketplaceSearchError(f"Lazada public search unavailable: {type(exc).__name__}") from exc
 
 
 def search_mudah(query: str, limit: int) -> list[dict]:
@@ -247,7 +342,13 @@ def _shopee_card_to_listing(anchor) -> dict | None:
 
 
 def _shopee_provider_record(record: dict) -> dict | None:
-    url = _shopee_listing_url(str(record.get("productUrl") or record.get("url") or ""))
+    url = _shopee_listing_url(str(
+        record.get("shopeeUrl")
+        or record.get("productPageUrl")
+        or record.get("productUrl")
+        or record.get("url")
+        or ""
+    ))
     title = str(
         record.get("title")
         or record.get("productName")
@@ -259,7 +360,12 @@ def _shopee_provider_record(record: dict) -> dict | None:
     if not url or not title or price is None:
         return None
     rating = _price(record.get("rating") or record.get("ratingStar"))
-    sold = _integer(record.get("historicalSold") or record.get("sold"))
+    sold = _integer(
+        record.get("historicalSold")
+        or record.get("totalSaleCnt")
+        or record.get("sold")
+        or record.get("estimateSold")
+    )
     description = str(record.get("description") or "").strip()
     if not description:
         description = f"{title}. {sold} sold" if sold is not None else title
@@ -270,7 +376,12 @@ def _shopee_provider_record(record: dict) -> dict | None:
         "description": description,
         "image_urls": _images(record.get("images") or record.get("imageUrl") or record.get("imageCover")),
         "seller_rating": None,
-        "seller_name": record.get("merchant") or record.get("shopName") or record.get("shopUsername"),
+        "seller_name": (
+            record.get("merchant")
+            or record.get("shopName")
+            or record.get("shopUsername")
+            or record.get("userName")
+        ),
         "listing_rating": rating if rating is not None and rating <= 5 else None,
         "review_count": _integer(record.get("ratings") or record.get("ratingCount")),
         "sold_count": sold,
@@ -293,7 +404,7 @@ def _search_shopee_provider(query: str, limit: int) -> list[dict]:
             json={
                 "station": "MY",
                 "keyword": query,
-                "keywordType": 2,
+                "keywordType": 1,
                 "page": 1,
                 "pageSize": limit,
             },
@@ -303,10 +414,17 @@ def _search_shopee_provider(query: str, limit: int) -> list[dict]:
         payload = response.json()
     except (httpx.HTTPError, ValueError) as exc:
         raise MarketplaceSearchError(f"Shopee data provider failed: {exc}") from exc
-    records = payload.get("products") or payload.get("items") or []
+    if isinstance(payload, dict) and payload.get("code") not in (None, 0):
+        raise MarketplaceSearchError(
+            str(payload.get("msg") or "Nexscope rejected the Shopee search request.")
+        )
+    data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
+    records = (data.get("products") or data.get("items") or []) if isinstance(data, dict) else []
     listings = [item for record in records if (item := _shopee_provider_record(record))]
     if not listings:
-        raise MarketplaceSearchError("Shopee data provider returned no usable product records.")
+        if records:
+            raise MarketplaceSearchError("Nexscope returned Shopee records without valid Malaysian product URLs.")
+        raise MarketplaceSearchError("Nexscope returned zero Shopee matches for this search.")
     return listings[:limit]
 
 

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Evidence-first Malaysian marketplace arbitrage analysis.">
   <title>ArbiSwarm — Deal intelligence</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=2.1.0">
 </head>
 <body>
   <header class="topbar">
@@ -66,10 +66,17 @@
           <span>What are you hunting?</span>
           <input id="query" name="query" type="search" value="Labubu Macaron" placeholder="e.g. Sony WH-1000XM5" minlength="2" maxlength="120" required autocomplete="off">
         </label>
-        <label class="field">
-          <span>Expected resale</span>
-          <div class="money-input"><b>RM</b><input id="resale" name="resale" type="number" value="90" min="1" step="1" required></div>
-        </label>
+        <div class="field resale-field">
+          <span>Resale model</span>
+          <div class="pricing-control">
+            <div class="pricing-switch" role="radiogroup" aria-label="Resale pricing mode">
+              <label><input type="radio" name="pricingMode" value="auto" checked><span>Auto market</span></label>
+              <label><input type="radio" name="pricingMode" value="manual"><span>Manual</span></label>
+            </div>
+            <div id="autoResaleState" class="auto-resale-state"><b>Live median</b><small>with confidence range</small></div>
+            <div id="manualResaleWrap" class="money-input" hidden><b>RM</b><input id="resale" name="resale" type="number" value="90" min="1" step="1"></div>
+          </div>
+        </div>
         <label class="field">
           <span>Max buy price</span>
           <div class="money-input"><b>RM</b><input id="maxPrice" name="maxPrice" type="number" value="60" min="1" step="1"></div>
@@ -81,11 +88,16 @@
     </section>
 
     <section id="runPanel" class="run-panel" hidden aria-live="polite">
-      <div class="run-copy">
-        <span class="loader" aria-hidden="true"></span>
-        <div><strong id="runTitle">Searching the market</strong><p id="runText">Verifying listing sources before analysis.</p></div>
+      <div class="scan-orb" aria-hidden="true"><i></i><i></i><i></i><b>AS</b></div>
+      <div class="run-content">
+        <p class="run-kicker"><span></span> LIVE MARKET INTELLIGENCE</p>
+        <div class="run-copy">
+          <div><strong id="runTitle">Opening marketplace channels</strong><p id="runText">Preparing verified source connections.</p></div>
+          <b id="runPercent" class="run-percent">12%</b>
+        </div>
+        <div id="runLog" class="run-log" aria-hidden="true"></div>
+        <div class="run-track"><span id="runProgress"></span></div>
       </div>
-      <div class="run-track"><span id="runProgress"></span></div>
     </section>
 
     <section id="errorPanel" class="error-panel" hidden role="alert">
@@ -109,8 +121,9 @@
     <section id="resultsSection" class="results-section" hidden>
       <div class="results-heading">
         <div><p class="section-label">SWARM OUTPUT</p><h2 id="resultsTitle">Decision queue</h2></div>
-        <p id="resultsMeta"></p>
+        <div class="results-heading-actions"><p id="resultsMeta"></p><button id="watchSearchBtn" class="watch-button" type="button">＋ Watch this search</button></div>
       </div>
+      <div id="sourceBar" class="source-bar" aria-label="Marketplace freshness"></div>
       <div id="results" class="results-grid"></div>
       <details id="discardedPanel" class="discarded" hidden>
         <summary><span id="discardedCount">0 listings filtered out</span><i>View reasons</i></summary>
@@ -128,19 +141,35 @@
       </div>
       <button id="closeHistoryBtn" class="icon-button" type="button" aria-label="Close history">×</button>
     </div>
-    <p class="history-intro">Open a saved analysis instantly. No marketplace request or AI call is made.</p>
-    <div id="historyList" class="history-list"></div>
-    <div id="historyEmpty" class="history-empty">
-      <span aria-hidden="true">↶</span>
-      <strong>No saved searches yet</strong>
-      <p>Your successful analyses will appear here.</p>
+    <div class="saved-tabs" role="tablist" aria-label="Saved items">
+      <button class="saved-tab active" type="button" data-saved-tab="history">History</button>
+      <button class="saved-tab" type="button" data-saved-tab="watchlists">Watchlists <b id="watchCount" hidden>0</b></button>
     </div>
-    <button id="clearHistoryBtn" class="clear-history" type="button" hidden>Clear all history</button>
+    <section id="historyPane" class="saved-pane">
+      <p class="history-intro">Open a saved analysis instantly. No marketplace request or AI call is made.</p>
+      <div id="historyList" class="history-list"></div>
+      <div id="historyEmpty" class="history-empty">
+        <span aria-hidden="true">↶</span>
+        <strong>No saved searches yet</strong>
+        <p>Your successful analyses will appear here.</p>
+      </div>
+      <button id="clearHistoryBtn" class="clear-history" type="button" hidden>Clear all history</button>
+    </section>
+    <section id="watchlistsPane" class="saved-pane" hidden>
+      <p class="history-intro">Run a saved market scan again and get an in-app alert when the best price drops or a new buy signal appears.</p>
+      <button id="addCurrentWatchBtn" class="add-watch-button" type="button">＋ Watch current search</button>
+      <div id="watchlistList" class="history-list"></div>
+      <div id="watchlistEmpty" class="history-empty">
+        <span aria-hidden="true">◎</span>
+        <strong>No watchlists yet</strong>
+        <p>Run an analysis, then save it as a watchlist.</p>
+      </div>
+    </section>
   </aside>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
   <footer><span>ArbiSwarm</span><p>Decision support, not a guarantee of authenticity or profit.</p></footer>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=2.1.0"></script>
 </body>
 </html>

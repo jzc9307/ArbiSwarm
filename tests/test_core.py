@@ -7,6 +7,7 @@ from pydantic import ValidationError
 import api
 import config
 import marketplaces
+from intelligence import group_listings, price_band, profile_variant, seller_confidence
 from agents.lead_strategist import calc_economics, decide
 from filters import hard_filter, load_listings
 from schemas import ContextAnalysis, Listing, VisionCheck
@@ -73,6 +74,57 @@ class FilterTests(unittest.TestCase):
         kept, discarded = hard_filter([listing(price=75)], query="Labubu Macaron", max_price=60)
         self.assertEqual(kept, [])
         self.assertIn("exceeds", discarded[0]["reason"])
+
+
+class IntelligenceTests(unittest.TestCase):
+    def test_variant_classifier_keeps_accessories_and_full_sets_separate(self):
+        accessory = profile_variant("Labubu Macaron display case protector")
+        full_set = profile_variant("Labubu Macaron complete set 12 pieces")
+        blind_box = profile_variant("Labubu Macaron sealed blind box")
+        compatible = profile_variant("SimBricks compatible with LEGO 75192 Millennium Falcon")
+        self.assertEqual(accessory.kind, "accessory")
+        self.assertEqual(full_set.kind, "full_set")
+        self.assertEqual(blind_box.kind, "blind_box")
+        self.assertEqual(compatible.kind, "compatible")
+
+    def test_plain_numbers_are_not_misread_as_variant_versions(self):
+        profile = profile_variant("LEGO 75192 large assembly toy male 6.14")
+        self.assertIsNone(profile.edition)
+
+    def test_starwars_spelling_and_retail_noise_still_group_same_set(self):
+        verbose = listing(
+            title="LEGO Star Wars Millennium Falcon 75192 Building Kit 7500 Pieces Construction Set",
+        )
+        compact = listing(
+            id="222",
+            title="LEGO StarWars Millennium Falcon 75192",
+            url="https://www.carousell.com.my/p/lego-starwars-222/",
+        )
+        groups = group_listings([verbose, compact], "Lego 75192")
+        self.assertEqual(len(groups), 1)
+
+    def test_cross_market_grouping_respects_variant_kind(self):
+        blind = listing(title="POP MART Labubu Macaron sealed blind box")
+        accessory = listing(
+            id="222",
+            title="Labubu Macaron display case protector",
+            url="https://www.carousell.com.my/p/labubu-case-222/",
+        )
+        groups = group_listings([blind, accessory], "Labubu Macaron")
+        self.assertEqual(len(groups), 2)
+        self.assertEqual({group.profile.kind for group in groups}, {"blind_box", "accessory"})
+
+    def test_price_band_uses_median_and_confidence_range(self):
+        band = price_band([40, 42, 45, 47, 50])
+        self.assertEqual(band["estimate"], 45)
+        self.assertEqual(band["confidence"], "high")
+        self.assertLess(band["low"], band["high"])
+
+    def test_suspicious_price_reduces_seller_confidence(self):
+        normal = seller_confidence(listing(price=60, seller_rating=4.9, review_count=80), 100, [])
+        suspicious = seller_confidence(listing(price=20, seller_rating=4.9, review_count=80), 100, [])
+        self.assertLess(suspicious["score"], normal["score"])
+        self.assertIn("unusually", " ".join(suspicious["reasons"]))
 
 
 class StrategyTests(unittest.TestCase):
@@ -247,8 +299,36 @@ class MarketplaceAdapterTests(unittest.TestCase):
         self.assertEqual(rows[0]["listing_rating"], 4.8)
         self.assertEqual(rows[0]["sold_count"], 430)
 
+    def test_shopee_provider_unwraps_nexscope_envelope_and_uses_shopee_url(self):
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"code": 0, "data": {"products": [{
+                    "pid": "4048364407",
+                    "title": "LEGO 75192 Star Wars Millennium Falcon",
+                    "shopeeUrl": "https://shopee.com.my/LEGO-75192-i.141942477.4048364407",
+                    "productUrl": "https://down-my.img.susercontent.com/file/not-a-product-page",
+                    "price": 3399.9,
+                    "imageUrl": "https://down-my.img.susercontent.com/file/example",
+                    "rating": 4.8,
+                    "ratings": 91,
+                    "totalSaleCnt": 230,
+                    "shopName": "LEGO Store",
+                }]}}
+
+        with patch.object(marketplaces.httpx, "post", return_value=FakeResponse()):
+            rows = marketplaces._search_shopee_provider("Lego 75192", 4)
+        self.assertEqual(len(rows), 1)
+        self.assertIn("-i.141942477.4048364407", rows[0]["url"])
+        self.assertEqual(rows[0]["seller_name"], "LEGO Store")
+        self.assertEqual(rows[0]["sold_count"], 230)
+
     def test_lazada_json_maps_to_normalized_listing(self):
         class FakeResponse:
+            headers = {"content-type": "application/json"}
+
             def raise_for_status(self):
                 return None
 
@@ -269,6 +349,20 @@ class MarketplaceAdapterTests(unittest.TestCase):
         self.assertEqual(rows[0]["marketplace"], "lazada")
         self.assertEqual(rows[0]["price"], 15.99)
         self.assertEqual(rows[0]["listing_rating"], 4.9)
+
+    def test_lazada_html_bootstrap_uses_public_browser_fallback(self):
+        class HtmlResponse:
+            headers = {"content-type": "text/html;charset=UTF-8"}
+
+            def raise_for_status(self):
+                return None
+
+        expected = [{"id": "browser-result"}]
+        with patch.object(marketplaces.httpx, "get", return_value=HtmlResponse()):
+            with patch.object(marketplaces, "_search_lazada_browser", return_value=expected) as fallback:
+                rows = marketplaces.search_lazada("Lego 75192", 4)
+        self.assertEqual(rows, expected)
+        fallback.assert_called_once_with("Lego 75192", 4)
 
     def test_mudah_provider_maps_to_normalized_listing(self):
         data = {"results": [{
@@ -307,6 +401,22 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.ai_mode, "deterministic")
         self.assertTrue(all(item.source == "demo_cache" for item in response.decisions))
 
+    def test_auto_pricing_builds_market_groups_without_manual_resale(self):
+        response = api.search(api.SearchRequest(
+            query="Labubu Macaron",
+            pricing_mode="auto",
+            max_purchase_price=60,
+            source_mode="demo",
+        ))
+        self.assertEqual(response.pricing_mode, "auto")
+        self.assertGreater(len(response.product_groups), 0)
+        self.assertTrue(all(item.resale_sample_size >= 1 for item in response.decisions))
+        self.assertTrue(all(item.resale_estimate_myr > 0 for item in response.decisions))
+
+    def test_manual_pricing_requires_resale_value(self):
+        with self.assertRaises(ValidationError):
+            api.SearchRequest(query="camera", pricing_mode="manual", source_mode="demo")
+
     def test_live_block_does_not_fall_back_to_demo(self):
         failed = ([], {"carousell": 0}, [{"marketplace": "carousell", "message": "blocked"}])
         with patch.object(api.marketplace_service, "search_many", return_value=failed):
@@ -337,6 +447,24 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(response.decisions), 1)
         self.assertEqual(response.source_counts["carousell"], 1)
         self.assertEqual(response.source_errors[0]["marketplace"], "lazada")
+
+    def test_user_price_ceiling_can_exceed_legacy_global_default(self):
+        expensive = listing(price=2800).model_dump(mode="json")
+        with patch.object(
+            api.marketplace_service,
+            "search_many",
+            return_value=([expensive], {"carousell": 1}, []),
+        ):
+            response = api.search(api.SearchRequest(
+                query="Labubu Macaron",
+                pricing_mode="manual",
+                resale_estimate=4000,
+                max_purchase_price=3599,
+                source_mode="live",
+                marketplaces=["carousell"],
+            ))
+        self.assertEqual(len(response.decisions), 1)
+        self.assertEqual(response.decisions[0].price, 2800)
 
 
 if __name__ == "__main__":
