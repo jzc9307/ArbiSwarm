@@ -130,10 +130,13 @@ class IntelligenceTests(unittest.TestCase):
 class StrategyTests(unittest.TestCase):
     def setUp(self):
         self.old_key = config.GEMINI_API_KEY
+        self.old_keys = config.GEMINI_API_KEYS
         config.GEMINI_API_KEY = ""
+        config.GEMINI_API_KEYS = ()
 
     def tearDown(self):
         config.GEMINI_API_KEY = self.old_key
+        config.GEMINI_API_KEYS = self.old_keys
 
     def test_economics_charges_fee_on_resale(self):
         self.assertEqual(calc_economics(40, 90), (52.5, 37.5, 71.4))
@@ -255,9 +258,9 @@ class MarketplaceAdapterTests(unittest.TestCase):
                 ["carousell", "lazada", "mudah", "shopee"],
                 12,
             )
-        self.assertEqual(calls, [
-            ("carousell", 12), ("lazada", 12), ("mudah", 12), ("shopee", 12),
-        ])
+        self.assertEqual({name for name, _ in calls}, set(adapters))
+        self.assertTrue(all(limit == 12 for _, limit in calls))
+        self.assertTrue(all(1 <= sum(name == market for name, _ in calls) <= 3 for market in adapters))
 
     def test_shopee_card_maps_to_normalized_listing(self):
         class FakeImage:
@@ -416,10 +419,13 @@ class MarketplaceAdapterTests(unittest.TestCase):
 class ApiTests(unittest.TestCase):
     def setUp(self):
         self.old_key = config.GEMINI_API_KEY
+        self.old_keys = config.GEMINI_API_KEYS
         config.GEMINI_API_KEY = ""
+        config.GEMINI_API_KEYS = ()
 
     def tearDown(self):
         config.GEMINI_API_KEY = self.old_key
+        config.GEMINI_API_KEYS = self.old_keys
 
     def test_demo_search_returns_provenance(self):
         response = api.search(api.SearchRequest(

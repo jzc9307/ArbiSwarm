@@ -15,9 +15,9 @@ class Narrative(BaseModel):
     negotiation_message: str | None = None
 
 
-def calc_economics(listing_price: float, resale_estimate: float) -> tuple[float, float, float]:
+def calc_economics(listing_price: float, resale_estimate: float, shipping_cost: float | None = None) -> tuple[float, float, float]:
     # The platform fee is paid on the resale transaction, not on the purchase.
-    total_cost = listing_price + config.SHIPPING_COST_MYR + resale_estimate * config.PLATFORM_FEE_PCT
+    total_cost = listing_price + (config.SHIPPING_COST_MYR if shipping_cost is None else shipping_cost) + resale_estimate * config.PLATFORM_FEE_PCT
     profit = resale_estimate - total_cost
     margin_pct = (profit / total_cost * 100) if total_cost else -100.0
     return round(total_cost, 2), round(profit, 2), round(margin_pct, 1)
@@ -59,7 +59,10 @@ def decide(
     vision: VisionCheck,
     resale_estimate: float,
 ) -> StrategistDecision:
-    total_cost, profit, margin = calc_economics(listing.price, resale_estimate)
+    shipping = listing.shipping_cost_myr
+    if shipping is None and not listing.landed_cost_verified:
+        shipping = 0  # A clearly flagged lower bound, never an international RM8 guess.
+    total_cost, profit, margin = calc_economics(listing.price, resale_estimate, shipping)
     retail_evidence_risk = (
         listing.marketplace in {"lazada", "shopee"}
         and (
@@ -75,9 +78,13 @@ def decide(
         and profit > 0
         and not hard_risk
         and not vision_risk
+        and listing.landed_cost_verified
     )
     risk = "high" if hard_risk or vision_risk else ("medium" if analysis.red_flags or vision.consistency_score is None else "low")
     rejection_reasons = []
+    if not listing.landed_cost_verified:
+        rejection_reasons.append('international delivery/import costs require checkout verification')
+        risk = 'high'
     if not listing.source_verified:
         rejection_reasons.append("source provenance is unverified")
     if margin < config.MIN_MARGIN_PCT_TO_ALERT or profit <= 0:

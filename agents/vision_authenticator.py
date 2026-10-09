@@ -1,11 +1,9 @@
-import json
 from urllib.parse import urlparse
 
 import httpx
 
 from schemas import Listing, VisionCheck
-from agents._llm import is_enabled
-import config
+from agents._llm import is_enabled, call_json
 
 SYSTEM_PROMPT = """You compare listing photos with the title and description.
 Do not claim an item is authentic or counterfeit. Report only visible consistency,
@@ -19,15 +17,19 @@ _ALLOWED_IMAGE_HOST_SUFFIXES = (
     "lazcdn.com",
     "rnudah.com",
     "mudah.my",
+    "ebayimg.com",
+    "etsystatic.com",
+    "susercontent.com",
 )
 
 
 def _fetch_image(url: str) -> tuple[bytes, str] | None:
     parsed = urlparse(url)
-    if parsed.scheme != "https" or not parsed.netloc.endswith(_ALLOWED_IMAGE_HOST_SUFFIXES):
+    host = (parsed.hostname or '').lower()
+    if parsed.scheme != "https" or parsed.username or not any(host == suffix or host.endswith('.' + suffix) for suffix in _ALLOWED_IMAGE_HOST_SUFFIXES):
         return None
     try:
-        response = httpx.get(url, timeout=8, follow_redirects=True)
+        response = httpx.get(url, timeout=8, follow_redirects=False)
         response.raise_for_status()
         mime = response.headers.get("content-type", "").split(";", 1)[0]
         if not mime.startswith("image/") or len(response.content) > 8_000_000:
@@ -47,11 +49,10 @@ def check(listing: Listing) -> VisionCheck:
     if not is_enabled():
         return VisionCheck(
             consistency_score=None,
-            mismatches=["photo analysis requires GEMINI_API_KEY"],
+            mismatches=["photo analysis requires a configured Gemini key"],
             images_checked=0,
         )
 
-    from google import genai
     from google.genai import types
 
     parts: list[object] = [f"Title: {listing.title}\nDescription: {listing.description}"]
@@ -70,14 +71,7 @@ def check(listing: Listing) -> VisionCheck:
         )
 
     try:
-        response = genai.Client(api_key=config.GEMINI_API_KEY).models.generate_content(
-            model=config.CHEAP_MODEL,
-            contents=parts,
-            config={"system_instruction": SYSTEM_PROMPT, "response_mime_type": "application/json"},
-        )
-        text = (response.text or "").strip()
-        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        result = VisionCheck(**json.loads(text))
+        result = call_json(SYSTEM_PROMPT, parts, VisionCheck)
         result.images_checked = checked
         return result
     except Exception:

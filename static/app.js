@@ -183,7 +183,7 @@ $('#copilotInput').addEventListener('input', () => { composerDraft = null; sizeC
 function offerKey(item) { return item.offer_id || `${item.marketplace}:${item.listing_id}`; }
 function chatContext() {
   const request = currentRequest || buildRequest();
-  const fields = ['title', 'marketplace', 'price', 'resale_estimate_myr', 'estimated_profit_myr', 'estimated_margin_pct', 'total_cost_myr', 'platform_fee_myr', 'shipping_cost_myr', 'is_profitable', 'risk_level', 'reasoning', 'red_flags', 'variant_label', 'variant_kind', 'group_id', 'resale_confidence'];
+  const fields = ['title', 'marketplace', 'price', 'resale_estimate_myr', 'estimated_profit_myr', 'estimated_margin_pct', 'total_cost_myr', 'platform_fee_myr', 'shipping_cost_myr', 'is_profitable', 'risk_level', 'reasoning', 'red_flags', 'variant_label', 'variant_kind', 'group_id', 'resale_confidence', 'cost_warning'];
   return { source_mode: currentResponse?.source_mode || request.source_mode, query: currentResponse?.query || request.query, max_purchase_price: request.max_purchase_price, marketplaces: request.marketplaces,
     selected_offer_id: selectedOfferId, source_errors: currentResponse?.source_errors || [], discarded_count: currentResponse?.discarded?.length || 0,
     visible_marketplaces:viewFilters.markets, visible_variant_kind:viewFilters.kind, view_max_price:viewFilters.maxPrice, visible_offer_ids:visibleOffers().map(offerKey), total_offer_count:currentResponse?.decisions.length || 0,
@@ -671,6 +671,13 @@ async function loadHealth() {
   try {
     const response = await fetch('/api/health');
     const health = await response.json();
+    for (const market of ['ebay', 'etsy']) {
+      const ready = health.marketplaces?.[market] === 'official_api';
+      const label = $(`[data-market-state="${market}"]`);
+      const input = $(`input[name="marketplace"][value="${market}"]`);
+      if (label) label.textContent = ready ? 'Configured' : 'API setup';
+      if (input) input.closest('label').title = ready ? 'Official API credentials configured; access has not yet been verified.' : `${marketplaceName(market)} needs developer credentials. Selecting it will report a configuration warning.`;
+    }
     $('#systemState').classList.add('online');
     const shopee = health.marketplaces?.shopee === 'nexscope_api' ? ' · Shopee API ready' : '';
     const version = health.version ? ` · v${health.version}` : '';
@@ -685,7 +692,7 @@ function updateSourceNote() {
   const live = $('input[name="sourceMode"]:checked').value === 'live';
   $('#marketplacePicker').hidden = !live;
   $('#sourceNote').textContent = live
-    ? 'Search four Malaysian marketplaces in one run. A failed source is reported and never replaced with fake results.'
+    ? 'Search local markets and optional eBay/Etsy sources. International prices are converted to RM; landed costs still need verification.'
     : 'Demo mode uses a small, clearly labeled snapshot and only returns records relevant to your exact query.';
 }
 
@@ -804,7 +811,7 @@ function renderFilterControls(data) {
   const offers = data.decisions || [];
   const facetOffers = ArbiChatState.filterOffers(offers,{...viewFilters,markets:[]});
   const bar = $('#marketFilters'); bar.replaceChildren();
-  const markets = ['carousell','lazada','mudah','shopee'];
+  const markets = ['carousell','lazada','mudah','shopee','ebay','etsy'];
   ['all',...markets].forEach((market) => {
     const button = document.createElement('button'); button.type = 'button'; button.dataset.filterMarket = market;
     const selected = market === 'all' ? !viewFilters.markets.length : viewFilters.markets.includes(market);
@@ -838,7 +845,7 @@ function renderBoardView() {
   $('#profitMetric').textContent = bestProfit === null ? '—' : formatMoney(bestProfit);
   $('#resultsTitle').textContent = `${data.query} · ${decisions.length} visible offer${decisions.length === 1 ? '' : 's'}`;
   $('#filterStatus').textContent = `${decisions.length} of ${data.decisions.length} saved offers · ${groups.length} group${groups.length === 1 ? '' : 's'}`;
-  $('#resultsExplanation').textContent = `${!data.matching_version ? 'Older snapshot: rerun this search for updated product matching. ' : ''}${data.match_mode === 'related' ? 'Related variants are included, with separate valuations. ' : 'Exact-product checks enabled. '}Visible price ranges follow your filters; resale estimates retain the original comparison evidence. Title matching is provisional, not authenticity verification. Asking prices are not completed sales.`;
+  $('#resultsExplanation').textContent = `${(data.matching_version || 0) < 3 ? 'Older snapshot: rerun for updated intent matching. ' : ''}${data.search_intent?.note || ''} ${data.match_mode === 'related' ? 'Related variants keep separate valuations. ' : 'Exact-product checks enabled. '}Visible prices follow your filters. Asking-price estimates are not completed sales or authenticity verification.`;
   const countText = Object.entries(data.source_counts || {}).map(([name, count]) => `${marketplaceName(name)} ${count}`).join(' · ');
   $('#resultsMeta').textContent = `${countText || providerLabel(data.provider)} · ${data.pricing_mode === 'auto' ? 'market-priced' : 'manual resale'} · ${data.ai_mode === 'gemini' ? 'AI configured · rules decide' : 'rules verified'}`;
   renderSourceBar(data);
@@ -896,11 +903,13 @@ function renderCard(item, index) {
       <div class="deal-topline"><span class="decision ${item.is_profitable ? 'positive' : 'negative'}">${item.is_profitable ? 'BUY SIGNAL' : 'PASS'}</span><span class="risk risk-${item.risk_level}">${item.risk_level} risk</span></div>
       <h3>${escapeHtml(item.title)}</h3>
       <p class="seller-line"><b>From ${marketplaceName(item.marketplace)}</b> · ${seller} · ${escapeHtml(item.true_condition)}</p>
+      ${item.original_currency && item.original_currency !== 'MYR' ? `<p class="import-evidence">${escapeHtml(item.original_currency)} ${Number(item.original_price).toFixed(2)} → ${formatMoney(item.price)}<small>Reference FX ${escapeHtml(item.fx_rate_date || 'date unavailable')} · payment rates may differ</small></p>` : ''}
+      ${item.cost_warning ? `<p class="import-evidence">${escapeHtml(item.cost_warning)}</p>` : ''}
       <div class="confidence-line"><span><i style="--score:${confidence}%"></i></span><b>${confidence}/100 seller confidence</b><em>${escapeHtml(item.seller_confidence_label || 'limited')}</em></div>
       <div class="economics">
         <div><small>ASK</small><strong>${formatMoney(item.price)}</strong></div>
         <div><small>EST. RESALE</small><strong>${formatMoney(item.resale_estimate_myr ?? 0)}</strong><span>${formatMoney(item.resale_low_myr ?? 0)}–${formatMoney(item.resale_high_myr ?? 0)}</span></div>
-        <div><small>NET PROFIT</small><strong class="${item.estimated_profit_myr >= 0 ? 'gain' : 'loss'}">${signedMoney(item.estimated_profit_myr)}</strong></div>
+        <div><small>${item.cost_warning ? 'BEFORE IMPORT COSTS' : 'NET PROFIT'}</small><strong class="${item.estimated_profit_myr >= 0 ? 'gain' : 'loss'}">${signedMoney(item.estimated_profit_myr)}</strong></div>
         <div><small>MARGIN</small><strong>${Number(item.estimated_margin_pct).toFixed(1)}%</strong><span>${escapeHtml(item.resale_confidence || 'manual')} confidence</span></div>
       </div>
       <p class="reasoning">${escapeHtml(item.reasoning)}</p>
@@ -1218,9 +1227,9 @@ function freshness(value) {
 }
 
 function formatHistoryDate(value) { const date = new Date(value); return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('en-MY', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(date); }
-function marketplaceName(value) { return ({ carousell: 'Carousell', lazada: 'Lazada', mudah: 'Mudah', shopee: 'Shopee' })[value] || value; }
-function marketplaceLogo(value) { return `/static/assets/${({ carousell: 'carousell', lazada: 'lazada', mudah: 'mudah', shopee: 'shopee' })[value] || 'carousell'}.svg`; }
-function providerLabel(provider) { return ({ multi_market: 'Multi-market', carousell: 'Carousell', lazada: 'Lazada', mudah: 'Mudah', shopee: 'Shopee', demo_cache: 'Demo snapshot' })[provider] || provider; }
+function marketplaceName(value) { return ({ carousell: 'Carousell', lazada: 'Lazada', mudah: 'Mudah', shopee: 'Shopee', ebay: 'eBay', etsy: 'Etsy' })[value] || value; }
+function marketplaceLogo(value) { return `/static/assets/${({ carousell: 'carousell', lazada: 'lazada', mudah: 'mudah', shopee: 'shopee', ebay: 'ebay', etsy: 'etsy' })[value] || 'carousell'}.svg`; }
+function providerLabel(provider) { return ({ multi_market: 'Multi-market', carousell: 'Carousell', lazada: 'Lazada', mudah: 'Mudah', shopee: 'Shopee', ebay: 'eBay', etsy: 'Etsy', demo_cache: 'Demo snapshot' })[provider] || provider; }
 function formatMoney(value) { const number = Number(value); return Number.isFinite(number) ? `RM${number.toLocaleString('en-MY', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}` : '—'; }
 function signedMoney(value) { const number = Number(value) || 0; return `${number >= 0 ? '+' : '−'}${formatMoney(Math.abs(number))}`; }
 function shorten(value, length) { const text = String(value || 'Matched product'); return text.length > length ? `${text.slice(0, length - 1)}…` : text; }

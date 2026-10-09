@@ -6,8 +6,10 @@ from typing import Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from agents._llm import ai_status, call_json, failure_status, is_enabled
+from schemas import Marketplace
+from marketplaces import SUPPORTED_MARKETPLACES
 
-Market = Literal["carousell", "lazada", "mudah", "shopee"]
+Market = Marketplace
 
 
 class ChatOffer(BaseModel):
@@ -29,6 +31,7 @@ class ChatOffer(BaseModel):
     variant_kind: str = Field(default='unclear', max_length=50)
     group_id: str = Field(default="", max_length=150)
     resale_confidence: str = Field(default="low", max_length=30)
+    cost_warning: str | None = Field(default=None, max_length=500)
 
 
 class ChatTurn(BaseModel):
@@ -40,12 +43,12 @@ class ChatContext(BaseModel):
     source_mode: Literal["live", "demo"] = "live"
     query: str = Field(default="", max_length=120)
     max_purchase_price: float | None = Field(default=None, gt=0, le=1_000_000)
-    marketplaces: list[Market] = Field(default_factory=list, max_length=4)
+    marketplaces: list[Market] = Field(default_factory=list, max_length=6)
     offers: list[ChatOffer] = Field(default_factory=list, max_length=200)
     selected_offer_id: str | None = Field(default=None, max_length=150)
-    source_errors: list[dict] = Field(default_factory=list, max_length=4)
+    source_errors: list[dict] = Field(default_factory=list, max_length=6)
     discarded_count: int = Field(default=0, ge=0)
-    visible_marketplaces: list[Market] = Field(default_factory=list, max_length=4)
+    visible_marketplaces: list[Market] = Field(default_factory=list, max_length=6)
     view_max_price: float | None = Field(default=None, gt=0, le=1_000_000)
     total_offer_count: int = Field(default=0, ge=0, le=200)
     visible_offer_ids: list[str] | None = Field(default=None, max_length=200)
@@ -63,7 +66,7 @@ class ChatPlan(BaseModel):
     reply: str = Field(default="", max_length=4000)
     query: str | None = Field(default=None, min_length=2, max_length=120)
     max_purchase_price: float | None = Field(default=None, gt=0, le=1_000_000)
-    marketplaces: list[Market] | None = Field(default=None, min_length=1, max_length=4)
+    marketplaces: list[Market] | None = Field(default=None, min_length=1, max_length=6)
     offer_ids: list[str] = Field(default_factory=list, max_length=4)
     reset_filters: bool = False
     variant_kind: Literal['building_set', 'small_model', 'minifigure', 'accessory', 'incomplete', 'compatible', 'full_set', 'single', 'blind_box', 'unclear'] | None = None
@@ -87,6 +90,8 @@ offers. Never invent listings, prices, evidence, product authenticity or sold
 prices. An asking-price median is an estimate, not proven resale value. Seller
 confidence and ratings do not establish authenticity. Low price alone is not
 proof of counterfeit. Explain insufficient evidence plainly. Do not claim
+international asks are landed-cost buy opportunities; shipping/import/FX costs
+may be unknown, and cost_warning requires checkout verification. Do not claim
 background monitoring exists; watchlists currently need Scan now. If asked for
 authentic-only filtering, explain it is not implemented; do not promise it.
 For search, include the complete new query and retain existing constraints
@@ -114,7 +119,7 @@ BUDGET_PATTERN = re.compile(
 )
 SOURCE_CLAUSE = re.compile(
     r"\s+(?:on|from|in|across)\s+"
-    r"((?:carousell|lazada|mudah|shopee)(?:\s*(?:,|and|&|\+)\s*(?:carousell|lazada|mudah|shopee))*)"
+    r"((?:carousell|lazada|mudah|shopee|ebay|etsy)(?:\s*(?:,|and|&|\+)\s*(?:carousell|lazada|mudah|shopee|ebay|etsy))*)"
     r"(?:\s+only)?\b", re.I,
 )
 FOLLOWUP_PRICE = re.compile(r"\b(?:for|around|about|just|at|under|below|less than)\s*(?:just\s*)?(?:rm\s*)?(\d[\d,]*(?:\.\d+)?)\b(?![\d.]|\s*/\s*\d)", re.I)
@@ -132,7 +137,7 @@ def _view_command(req: ChatRequest) -> ChatPlan | None:
                 'building_set' if re.search(r'big (?:version|falcon|model)|complete (?:lego|building) set|ucs (?:version|model|only)', text) else None)
         if kind:
             return ChatPlan(intent='filter', variant_kind=kind)
-    markets = [market for market in ('carousell', 'lazada', 'mudah', 'shopee') if market in text]
+    markets = [market for market in SUPPORTED_MARKETPLACES if market in text]
     if markets and not re.search(r'\b(?:refresh|rescan|watch|seller|fake|authentic)\b', text) and re.search(r'\b(?:only|just|show|compare|filter|what about|how about)\b', text):
         amount = FOLLOWUP_PRICE.search(text)
         return ChatPlan(intent='filter', marketplaces=markets, max_purchase_price=float(amount.group(1).replace(',', '')) if amount else None)
@@ -158,7 +163,7 @@ def _search_command(req: ChatRequest) -> ChatPlan | None:
     budget = float(budget_match.group(1).replace(',', '')) if budget_match else req.context.max_purchase_price
     query = re.sub(r"(?:\s+(?:with(?:\s+a)?|at|for))?\s*" + BUDGET_PATTERN.pattern, '', query, flags=re.I)
     source_match = SOURCE_CLAUSE.search(query)
-    markets = re.findall(r"carousell|lazada|mudah|shopee", source_match.group(1).lower()) if source_match else None
+    markets = re.findall(r"carousell|lazada|mudah|shopee|ebay|etsy", source_match.group(1).lower()) if source_match else None
     query = SOURCE_CLAUSE.sub('', query)
     query = re.sub(r"\s+", " ", query).strip(' ,.;')
     query = re.sub(r"\s+(?:please|pls)$", '', query, flags=re.I)
@@ -171,7 +176,7 @@ def _search_command(req: ChatRequest) -> ChatPlan | None:
 
 def _fallback(req: ChatRequest) -> ChatPlan:
     text = req.message.lower()
-    markets = [market for market in ("carousell", "lazada", "mudah", "shopee") if market in text]
+    markets = [market for market in SUPPORTED_MARKETPLACES if market in text]
     budget = BUDGET_PATTERN.search(req.message)
     command = _search_command(req)
     if command:

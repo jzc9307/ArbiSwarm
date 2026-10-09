@@ -1,10 +1,12 @@
 # ArbiSwarm
 
-ArbiSwarm is an evidence-first multi-market arbitrage analyzer for Carousell, Lazada, Mudah, and Shopee Malaysia. Deterministic code owns ingestion, URL validation, relevance filtering, and margin math; three agents inspect context, photos, and risk before a deal reaches the dashboard.
+ArbiSwarm is an evidence-first multi-market arbitrage analyzer for Carousell, Lazada, Mudah, Shopee Malaysia, and optional official eBay/Etsy sources. Gemini interprets search intent and equivalent terminology; deterministic code enforces identity, URL validation, and margin math. Three agents inspect context, photos, and risk before a deal reaches the dashboard.
 
 ## What changed from the prototype
 
-- One search now fans out to Carousell, Lazada, Mudah, and Shopee and normalizes their different records into one contract.
+- One search fans out to selected local markets and optional eBay/Etsy adapters, normalizing their records into one contract. International sources require their own approved developer credentials.
+- A cached Gemini intent planner generates up to three equivalent queries and context-specific concept aliases across product categories. Local fallback covers common terms, season formats, and model punctuation. All original concepts are still required; numeric model IDs, brands, requested sizes and seasons cannot be silently broadened. This is provisional textual matching, not product authentication.
+- The purchase budget is optional and starts empty. Search first, then use saved-result filters to explore a price range.
 - Live search uses real marketplace product URLs and never invents ratings, descriptions, or images.
 - A Cloudflare/anti-bot challenge produces an honest `503 MARKETPLACE_BLOCKED` response. It does **not** silently return demo listings.
 - Demo records are clearly labeled, query-filtered, and point to real product-page URLs.
@@ -93,6 +95,15 @@ uvicorn api:app --reload
 
 The application automatically loads the project-root `.env` file on startup. Variables already exported in the shell take precedence.
 
+For multiple authorized Gemini keys, keep the primary and add a numbered backup:
+
+```dotenv
+GEMINI_API_KEY=primary_key
+GEMINI_API_KEY_2=backup_key
+```
+
+Alternatively, use `GEMINI_API_KEYS=backup_key_1,backup_key_2`. Duplicate keys are removed. All Gemini consumers (intent planning, chat and agents) share one helper: HTTP 429 cools the affected key and tries another available key. Each attempt has a timeout, so additional keys can increase worst-case response time. Retry hints are respected, each key is attempted at most once per call, and exhausted pools return to explicit local fallback. Cooldowns are process-local; a multi-worker deployment needs shared quota coordination. Other errors do not cycle keys. Keys belonging to the same Google project share quota; separate authorized projects may have separate limits. Restart the backend after changing `.env`; the app does not rewrite it or expose keys to the browser. See [Gemini rate limits](https://ai.google.dev/gemini-api/docs/rate-limits).
+
 Open <http://127.0.0.1:8000>.
 
 ## Data modes
@@ -105,16 +116,33 @@ Without it, Playwright attempts the public Carousell page. Carousell currently u
 
 Each source fails independently: if one marketplace is unavailable, results from healthy sources still render with a visible warning. If Shopee requests human verification or stops exposing readable public product cards, ArbiSwarm reports the source failure and continues with the other selected marketplaces.
 
+### eBay and Etsy
+
+The new search checkboxes are opt-in and show `API setup` until credentials are configured. API configuration is not proof of provider access. Both sources participate in grouped results, source refresh, saved-result filters, history, watchlist scans, and chat commands such as `find Liverpool shirt 97/98 on ebay and etsy`.
+
+- eBay: configure `EBAY_CLIENT_ID` and `EBAY_CLIENT_SECRET` for a production application with Browse API access. The app caches an OAuth client-credentials token, searches fixed-price items, and requests delivery eligibility for Malaysia. `EBAY_MARKETPLACE_ID` defaults to `EBAY_US`.
+- Etsy: configure `ETSY_API_KEY` (keystring) and `ETSY_SHARED_SECRET` with approved API access. Public active listings are searched with `buyer_country=MY`; a batch request enriches images. Digital downloads are excluded. No seller ratings are invented.
+- Foreign currencies use cached [Frankfurter reference rates](https://frankfurter.dev/v1/), with original currency, price, rate and date preserved. Failed conversion is reported; currency values are never mistaken for MYR. Checkout/payment rates may differ.
+- International items are comparison evidence only. Returned shipping quotes are included when available; unknown shipping is a flagged lower bound, not the domestic RM8 default. Import taxes and payment charges need checkout verification. International offers cannot emit buy alerts, even if a client claims landed costs were verified.
+
+References: [eBay Browse API](https://www.developer.ebay.com/api-docs/buy/static/api-browse.html), [eBay OAuth](https://www.developer.ebay.com/develop/guides/sell/authorization), [Etsy requests](https://developer.etsy.com/documentation/essentials/requests/), [Etsy official OpenAPI specification](https://www.etsy.com/openapi/generated/oas/3.0.0.json).
+
+### Facebook access research (not integrated)
+
+A general-purpose public Marketplace search integration could not be verified in Meta's accessible developer documentation. Third-party services such as [Social Fetch](https://www.socialfetch.dev/platforms/facebook/marketplace-search) document API-key-based keyword/location search without the customer's Facebook login. That is a technically simpler path, not proof of Meta authorization, coverage or reliability. [Meta requires prior permission for automated collection](https://about.fb.com/news/2021/04/how-we-combat-scraping/); [Social Fetch's DPA](https://www.socialfetch.dev/dpa) assigns permissions/legal-basis responsibility to the customer. Do not supply session cookies, bypass verification, or assume buying an API key grants upstream permission. Confirm authorization and Malaysian coverage before connecting a provider. A manual Facebook search handoff with user-provided listing evidence remains an alternative.
+
 ### Demo snapshot
 
 The bundled snapshot is only for the `Labubu Macaron` demo. A different query returns zero records rather than unrelated Labubu data.
 
 ## Optional services
 
-- `GEMINI_API_KEY`: enables LLM context and photo analysis. Without it, rules-based fallbacks run and the UI says `Deterministic mode`.
+- `GEMINI_API_KEY`, `GEMINI_API_KEY_2`, `GEMINI_API_KEYS`: optional primary/backup key pool for Gemini intent planning, chat, context and photo analysis. Without any key, local fallbacks run and the UI says `Deterministic mode`.
 - `GEMINI_MODEL`: defaults to `gemini-3.8-flash`. A retired model returning 404/410 is retried once with `GEMINI_FALLBACK_MODEL` (same default), without changing your `.env`. Requests have a 20-second timeout and no automatic SDK retries; local fallbacks remain available.
 - `REEF_API_KEY`: provides reliable live Carousell and Mudah search data.
 - `NEXSCOPE_API_KEY`: provides reliable Shopee Malaysia keyword-search data. Without it, the public-browser attempt may be rejected by Shopee.
+- `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_MARKETPLACE_ID`: official eBay Browse API integration.
+- `ETSY_API_KEY`, `ETSY_SHARED_SECRET`: official Etsy search integration.
 - `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`: send alerts for candidates that pass deterministic rules.
 
 See [.env.example](.env.example) for all tunable thresholds.

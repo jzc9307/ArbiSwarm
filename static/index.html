@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Evidence-first Malaysian marketplace arbitrage analysis.">
   <title>ArbiSwarm — Deal intelligence</title>
-  <link rel="stylesheet" href="/static/style.css?v=2.3.0">
+  <link rel="stylesheet" href="/static/style.css?v=2.4.0">
   <link rel="stylesheet" href="/static/copilot.css?v=3.0.1">
 </head>
 <body>
@@ -53,13 +53,15 @@
         </div>
       </div>
 
-      <p id="sourceNote" class="source-note">Search four Malaysian marketplaces in one run. A failed source is reported and never replaced with fake results.</p>
+      <p id="sourceNote" class="source-note">Search local markets and optional eBay/Etsy sources. International prices are converted to RM; landed costs still need verification.</p>
 
       <div id="marketplacePicker" class="marketplace-picker" aria-label="Marketplaces to search">
         <label><input type="checkbox" name="marketplace" value="carousell" checked><span><i class="market-dot carousell"></i>Carousell</span></label>
         <label><input type="checkbox" name="marketplace" value="lazada" checked><span><i class="market-dot lazada"></i>Lazada</span></label>
         <label><input type="checkbox" name="marketplace" value="mudah" checked><span><i class="market-dot mudah"></i>Mudah</span></label>
         <label><input type="checkbox" name="marketplace" value="shopee" checked><span><i class="market-dot shopee"></i>Shopee</span></label>
+        <label><input type="checkbox" name="marketplace" value="ebay"><span><i class="market-dot ebay"></i>eBay <small data-market-state="ebay">API setup</small></span></label>
+        <label><input type="checkbox" name="marketplace" value="etsy"><span><i class="market-dot etsy"></i>Etsy <small data-market-state="etsy">API setup</small></span></label>
       </div>
 
       <form id="searchForm" class="search-form">
@@ -79,8 +81,8 @@
           </div>
         </div>
         <label class="field">
-          <span>Max buy price</span>
-          <div class="money-input"><b>RM</b><input id="maxPrice" name="maxPrice" type="number" value="60" min="1" step="1"></div>
+          <span>Budget · optional</span>
+          <div class="money-input"><b>RM</b><input id="maxPrice" name="maxPrice" type="number" placeholder="No limit yet" min="1" step="1"></div>
         </label>
         <button id="startBtn" class="primary-button" type="submit">
           <span>Run analysis</span><i aria-hidden="true">→</i>
@@ -208,6 +210,6 @@
 
   <footer><span>ArbiSwarm</span><p>Decision support, not a guarantee of authenticity or profit.</p></footer>
   <script src="/static/chat-state.js?v=3.1.0"></script>
-  <script src="/static/app.js?v=3.1.0"></script>
+  <script src="/static/app.js?v=3.2.0"></script>
 </body>
 </html>

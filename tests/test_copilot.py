@@ -10,7 +10,7 @@ from tests.test_core import listing
 class BoardWiringTests(unittest.TestCase):
     def run_search(self, rows, **fields):
         counts = {market: sum(item.marketplace == market for item in rows) for market in fields.get('marketplaces', ['carousell'])}
-        with patch.object(api.marketplace_service, 'search_many', return_value=([item.model_dump(mode='json') for item in rows], counts, [])), patch.object(api.config, 'GEMINI_API_KEY', ''):
+        with patch.object(api.marketplace_service, 'search_many', return_value=([item.model_dump(mode='json') for item in rows], counts, [])), patch.object(api.config, 'GEMINI_API_KEY', ''), patch.object(api.config, 'GEMINI_API_KEYS', ()):
             return api.search(api.SearchRequest(query='Labubu Macaron', pricing_mode='auto', max_purchase_price=299, source_mode='live', **fields))
 
     def test_visible_range_obeys_budget_but_retains_price_evidence(self):
@@ -191,7 +191,7 @@ class LlmFallbackTests(unittest.TestCase):
         from agents.lead_strategist import decide
         from schemas import ContextAnalysis, VisionCheck
         retail = listing(price=23, marketplace='lazada', source='lazada_live', url='https://www.lazada.com.my/products/labubu-i123456.html')
-        with patch.object(api.config, 'GEMINI_API_KEY', ''):
+        with patch.object(api.config, 'GEMINI_API_KEY', ''), patch.object(api.config, 'GEMINI_API_KEYS', ()):
             decision = decide(retail, ContextAnalysis(true_condition='New'), VisionCheck(consistency_score=None), 80)
         self.assertGreater(decision.estimated_margin_pct, 20)
         self.assertFalse(decision.is_profitable)

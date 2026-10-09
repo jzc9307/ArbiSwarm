@@ -10,14 +10,18 @@ from playwright.sync_api import sync_playwright
 
 import config
 import scraper as carousell
+from international_markets import InternationalSearchError, search_ebay, search_etsy
+from search_intent import query_terms, SearchIntent, plan_search
 
 
-SUPPORTED_MARKETPLACES = ("carousell", "lazada", "mudah", "shopee")
+SUPPORTED_MARKETPLACES = ("carousell", "lazada", "mudah", "shopee", "ebay", "etsy")
 DISPLAY_NAMES = {
     "carousell": "Carousell",
     "lazada": "Lazada",
     "mudah": "Mudah",
     "shopee": "Shopee",
+    "ebay": "eBay",
+    "etsy": "Etsy",
 }
 
 
@@ -486,10 +490,12 @@ ADAPTERS = {
     "lazada": search_lazada,
     "mudah": search_mudah,
     "shopee": search_shopee,
+    "ebay": search_ebay,
+    "etsy": search_etsy,
 }
 
 
-def search_many(query: str, selected: list[str], total_limit: int) -> tuple[list[dict], dict, list[dict]]:
+def search_many(query: str, selected: list[str], total_limit: int, *, intent: SearchIntent | None = None) -> tuple[list[dict], dict, list[dict]]:
     unknown = [name for name in selected if name not in ADAPTERS]
     if unknown:
         raise ValueError(f"unsupported marketplaces: {', '.join(unknown)}")
@@ -498,15 +504,37 @@ def search_many(query: str, selected: list[str], total_limit: int) -> tuple[list
     # Carousell cards, while refreshing Carousell alone saw twelve and appeared
     # to "discover" missing results.
     per_source_limit = max(3, total_limit)
+    intent = intent or plan_search(query, use_ai=False)
     all_listings: list[dict] = []
     counts: dict[str, int] = {}
     errors: list[dict] = []
     for name in selected:
         try:
-            rows = ADAPTERS[name](query, per_source_limit)
+            unique: dict[str, dict] = {}
+            wanted = query_terms(query)
+            for variant in intent.queries:
+                try:
+                    fetched = ADAPTERS[name](variant, per_source_limit)
+                except (MarketplaceSearchError, carousell.MarketplaceError, InternationalSearchError) as exc:
+                    if not unique:
+                        raise
+                    errors.append({'marketplace': name, 'message': f'Additional query failed; earlier results retained. {exc}'})
+                    break
+                for row in fetched:
+                    key = str(row.get('id') or row.get('url') or len(unique))
+                    unique.setdefault(key, row)
+                matched = sum(intent.matches(str(row.get('title', '')), str(row.get('description', '')), wanted) for row in unique.values())
+                if matched >= per_source_limit:
+                    break
+            rows = sorted(unique.values(), key=lambda row: intent.matches(str(row.get('title', '')), str(row.get('description', '')), wanted), reverse=True)[:per_source_limit]
             counts[name] = len(rows)
             all_listings.extend(rows)
-        except (MarketplaceSearchError, carousell.MarketplaceError) as exc:
+        except (MarketplaceSearchError, carousell.MarketplaceError, InternationalSearchError) as exc:
             counts[name] = 0
             errors.append({"marketplace": name, "message": str(exc)})
+        except Exception:
+            # A malformed upstream record must not crash healthy marketplaces
+            # or relay headers/credentials embedded in an exception message.
+            counts[name] = 0
+            errors.append({'marketplace': name, 'message': f'{DISPLAY_NAMES[name]} returned an unexpected product format. Other sources continue.'})
     return all_listings, counts, errors

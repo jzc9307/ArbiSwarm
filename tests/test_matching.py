@@ -82,7 +82,7 @@ class ProductIdentityTests(unittest.TestCase):
 
 class ValuationGuardTests(unittest.TestCase):
     def run_search(self, rows, match_mode='exact'):
-        with patch.object(api.marketplace_service,'search_many',return_value=([row.model_dump(mode='json') for row in rows], {'carousell':len(rows)}, [])), patch.object(api.config,'GEMINI_API_KEY',''), patch.object(api.notify,'send_telegram_alert'):
+        with patch.object(api.marketplace_service,'search_many',return_value=([row.model_dump(mode='json') for row in rows], {'carousell':len(rows)}, [])), patch.object(api.config,'GEMINI_API_KEY',''), patch.object(api.config,'GEMINI_API_KEYS',()), patch.object(api.notify,'send_telegram_alert'):
             return api.search(api.SearchRequest(query='LEGO 75192', pricing_mode='auto', max_purchase_price=4000, match_mode=match_mode))
 
     def test_figures_cannot_pollute_full_set_median(self):

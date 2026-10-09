@@ -66,9 +66,12 @@ main { max-width: 1240px; margin: auto; padding: 0 28px 96px; }
 .marketplace-picker input:checked + span { color: white; border-color: #7f936e; background: #24382d; }
 .market-dot { width: 7px; height: 7px; border-radius: 50%; background: #778279; }
 .marketplace-picker input:checked + span .carousell { background: #ff6f61; }
-.marketplace-picker input:checked + span .lazada { background: #f5a623; }
+.marketplace-picker input:checked + span .lazada { background: #a12fb8; }
 .marketplace-picker input:checked + span .mudah { background: #2ebd77; }
 .marketplace-picker input:checked + span .shopee { background: #ee4d2d; }
+.marketplace-picker input:checked + span .ebay { background: #4285e8; }
+.marketplace-picker input:checked + span .etsy { background: #f1641e; }
+.marketplace-picker small { font-size: 9px; opacity: .7; font-weight: 500; }
 .search-form { display: grid; grid-template-columns: minmax(280px, 1.7fr) minmax(330px, 1.1fr) minmax(165px, .65fr) auto; gap: 12px; align-items: end; }
 .field { display: grid; gap: 8px; }
 .field > span { color: #b9c3bd; font: 500 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
@@ -120,6 +123,10 @@ main { max-width: 1240px; margin: auto; padding: 0 28px 96px; }
 .deal-card.market-lazada { --market: #f7277a; --market-dark: #32156f; --market-soft: #faf8ff; --market-deep: #171b72; --market-glow: rgba(78,39,150,.09); }
 .deal-card.market-mudah { --market: #00a651; --market-dark: #006a37; --market-soft: #f6fcf8; --market-deep: #075f37; --market-glow: rgba(0,166,81,.08); }
 .deal-card.market-shopee { --market: #ee4d2d; --market-dark: #b92e15; --market-soft: #fff9f7; --market-deep: #a43620; --market-glow: rgba(238,77,45,.08); }
+.deal-card.market-ebay { --market: #366fe7; --market-dark: #244ea3; --market-soft: #f6f9ff; --market-deep: #244ea3; --market-glow: rgba(54,111,231,.08); }
+.deal-card.market-etsy { --market: #f1641e; --market-dark: #a33e10; --market-soft: #fffaf5; --market-deep: #a33e10; --market-glow: rgba(241,100,30,.08); }
+.import-evidence { margin: 9px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--market-soft); color: var(--market-dark); font-size: 11px; line-height: 1.55; }
+.import-evidence small { display: block; color: var(--muted); }
 @keyframes reveal { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 .deal-card.buy { box-shadow: inset 0 1px 0 white, 0 20px 52px rgba(16,32,24,.1), 0 3px 12px var(--market-glow); }
 .deal-image { flex: 0 0 210px; height: 210px; position: relative; background: #dfe5de; overflow: hidden; }
@@ -293,6 +300,8 @@ footer p { margin: 0; }
 .source-chip.market-lazada { --market: #5b2c91; }
 .source-chip.market-mudah { --market: #00a651; }
 .source-chip.market-shopee { --market: #ee4d2d; }
+.source-chip.market-ebay { --market: #366fe7; }
+.source-chip.market-etsy { --market: #c45119; }
 .source-chip > img { width: 66px; height: 18px; object-fit: contain; object-position: left; }
 .source-chip > span { flex: 1; min-width: 0; }
 .source-chip b, .source-chip small { display: block; }

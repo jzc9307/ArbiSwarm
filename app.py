@@ -17,7 +17,7 @@ max_price = st.number_input("Maximum purchase price (RM)", min_value=1.0, value=
 source_mode = st.radio("Data source", ["Live market", "Demo snapshot"], horizontal=True)
 selected_marketplaces = st.multiselect(
     "Marketplaces",
-    ["carousell", "lazada", "mudah", "shopee"],
+    list(marketplace_service.SUPPORTED_MARKETPLACES),
     default=["carousell", "lazada", "mudah", "shopee"],
     disabled=source_mode != "Live market",
 )

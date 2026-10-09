@@ -15,13 +15,14 @@ import marketplaces as marketplace_service
 import notify
 from intelligence import group_listings, price_band, seller_confidence
 from orchestrator import run_swarm
-from schemas import Listing
+from schemas import Listing, Marketplace
 from copilot import ChatRequest, chat
-from agents._llm import ai_status
+from agents._llm import ai_status, is_enabled
+from search_intent import SearchIntent, plan_search
 
 logger = logging.getLogger("arbiswarm")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.4.0"
 app = FastAPI(title="ArbiSwarm API", version=APP_VERSION)
 
 
@@ -41,10 +42,10 @@ class SearchRequest(BaseModel):
     resale_estimate: Optional[float] = Field(default=None, gt=0, le=1_000_000)
     max_purchase_price: Optional[float] = Field(default=None, gt=0, le=1_000_000)
     source_mode: Literal["live", "demo"] = "live"
-    marketplaces: list[Literal["carousell", "lazada", "mudah", "shopee"]] = Field(
+    marketplaces: list[Marketplace] = Field(
         default_factory=lambda: ["carousell", "lazada", "mudah", "shopee"],
         min_length=1,
-        max_length=4,
+        max_length=6,
     )
     retained_market_listings: list[Listing] = Field(default_factory=list, max_length=200)
     retained_source_times: dict[str, datetime] = Field(default_factory=dict)
@@ -112,6 +113,11 @@ class DecisionOut(BaseModel):
     shipping_cost_myr: float
     decision_factors: list[str]
     collected_at: datetime
+    original_price: Optional[float] = None
+    original_currency: Optional[str] = None
+    fx_rate_to_myr: Optional[float] = None
+    fx_rate_date: Optional[str] = None
+    cost_warning: Optional[str] = None
 
 
 class ProductGroupOut(BaseModel):
@@ -136,7 +142,7 @@ class SearchResponse(BaseModel):
     provider: str
     pricing_mode: str
     match_mode: str = 'exact'
-    matching_version: int = 2
+    matching_version: int = 3
     collected_at: datetime
     marketplaces: list[str]
     source_counts: dict[str, int]
@@ -148,6 +154,7 @@ class SearchResponse(BaseModel):
     decisions: list[DecisionOut]
     product_groups: list[ProductGroupOut]
     market_listings: list[Listing] = Field(default_factory=list)
+    search_intent: SearchIntent | None = None
 
 
 @app.get("/api/health")
@@ -155,13 +162,15 @@ def health() -> dict:
     return {
         "ok": True,
         "version": APP_VERSION,
-        "ai_mode": "gemini" if config.GEMINI_API_KEY else "deterministic",
+        "ai_mode": "gemini" if is_enabled() else "deterministic",
         "ai_status": ai_status(),
         "marketplaces": {
             "carousell": "reef_api" if config.REEF_API_KEY else "direct_browser",
             "lazada": "public_json",
             "mudah": "reef_api" if config.REEF_API_KEY else "not_configured",
             "shopee": "nexscope_api" if config.NEXSCOPE_API_KEY else "public_browser_best_effort",
+            "ebay": "official_api" if config.EBAY_CLIENT_ID and config.EBAY_CLIENT_SECRET else "not_configured",
+            "etsy": "official_api" if config.ETSY_API_KEY and config.ETSY_SHARED_SECRET else "not_configured",
         },
     }
 
@@ -174,17 +183,18 @@ def copilot_chat(req: ChatRequest) -> dict:
 @app.post("/api/search", response_model=SearchResponse)
 def search(req: SearchRequest) -> SearchResponse:
     ingest_discarded: list[dict] = []
+    intent = plan_search(req.query, use_ai=req.source_mode == 'live')
     if req.source_mode == "live":
         try:
             raw, source_counts, source_errors = marketplace_service.search_many(
-                req.query, req.marketplaces, config.MAX_SEARCH_RESULTS
+                req.query, req.marketplaces, config.MAX_SEARCH_RESULTS, intent=intent
             )
         except ValueError as exc:
             raise HTTPException(
                 status_code=422,
                 detail={"code": "INVALID_MARKETPLACE", "message": str(exc)},
             ) from exc
-        if source_errors and len(source_errors) == len(req.marketplaces):
+        if source_errors and all(source_counts.get(market, 0) == 0 and any(error['marketplace'] == market for error in source_errors) for market in req.marketplaces):
             message = "; ".join(f"{item['marketplace']}: {item['message']}" for item in source_errors)
             raise HTTPException(
                 status_code=502,
@@ -229,6 +239,7 @@ def search(req: SearchRequest) -> SearchResponse:
         query=req.query,
         max_price=float("inf"),
         match_mode=req.match_mode,
+        intent=intent,
     )
     kept, price_discarded = hard_filter(
         market_pool,
@@ -275,6 +286,8 @@ def search(req: SearchRequest) -> SearchResponse:
             evidence_hold = 'Ask is far below the comparison median. Confirm the exact item and included parts before treating this as a deal; price alone does not prove a fake.'
         if group.profile.kind in {'unclear', 'incomplete'} and req.pricing_mode == 'auto':
             evidence_hold = 'Product/pack identity is not established well enough for a buy recommendation.'
+        if not listing.landed_cost_verified:
+            evidence_hold = listing.cost_warning or 'Landed costs are unverified. International prices are comparison evidence only.'
         if evidence_hold:
             decision.is_profitable = False
             decision.risk_level = 'high'
@@ -342,7 +355,12 @@ def search(req: SearchRequest) -> SearchResponse:
                 seller_confidence_label=trust["label"],
                 seller_confidence_reasons=trust["reasons"],
                 platform_fee_myr=round(resale_estimate * config.PLATFORM_FEE_PCT, 2),
-                shipping_cost_myr=config.SHIPPING_COST_MYR,
+                shipping_cost_myr=(listing.shipping_cost_myr if listing.shipping_cost_myr is not None else (config.SHIPPING_COST_MYR if listing.landed_cost_verified else 0)),
+                original_price=listing.original_price,
+                original_currency=listing.original_currency,
+                fx_rate_to_myr=listing.fx_rate_to_myr,
+                fx_rate_date=listing.fx_rate_date,
+                cost_warning=listing.cost_warning,
                 decision_factors=factors,
                 collected_at=req.retained_source_times.get(listing.marketplace, collected_at) if listing.marketplace not in req.marketplaces else collected_at,
             )
@@ -394,13 +412,14 @@ def search(req: SearchRequest) -> SearchResponse:
         marketplaces=searched_marketplaces,
         source_counts=source_counts,
         source_errors=source_errors,
-        ai_mode="gemini" if config.GEMINI_API_KEY else "deterministic",
+        ai_mode="gemini" if is_enabled() else "deterministic",
         total_scraped=len(listings),
         kept_after_filter=len(kept),
         discarded=discarded,
         decisions=decisions,
         product_groups=product_groups,
         market_listings=market_pool,
+        search_intent=intent,
     )
 
 

@@ -8,6 +8,7 @@ from statistics import median, quantiles
 import re
 
 from schemas import Listing
+from search_intent import normalize_text, season_key
 
 
 STOP_WORDS = {
@@ -66,6 +67,7 @@ class ListingGroup:
 
 
 def _tokens(text: str) -> set[str]:
+    text = normalize_text(text)
     text = re.sub(r"\bstarwars\b", "star wars", text, flags=re.I)
     text = re.sub(r"\bmillenniumfalcon\b", "millennium falcon", text, flags=re.I)
     return {
@@ -84,8 +86,7 @@ def profile_variant(title: str) -> VariantProfile:
     lego = bool(re.search(r"lego|star\s*wars|falcon", lowered))
     format = ('small' if re.search(r"\b(?:mini|micro|midi|small|miniature)\b", lowered)
               else 'ucs' if re.search(r"\bucs\b|ultimate collector|\bbig version\b|\blarge (?:model|version)\b", lowered) else None)
-    season_match = re.search(r"\b(\d{2})\s*[/\-]\s*(\d{2})\b", lowered)
-    season = '/'.join(season_match.groups()) if season_match else None
+    season = season_key(title)
     audience = ('kids' if re.search(r"\b(?:kids?|children|junior|youth)\b", lowered)
                 else 'women' if re.search(r"\bwom[ae]n|\bladies\b", lowered)
                 else 'men' if re.search(r"\bmen|\badult\b", lowered) else None)
@@ -165,6 +166,9 @@ def identity_reason(title: str, query: str, description: str = '') -> str | None
     """Conservative exact-product intent checks; never authenticate a product."""
     wanted, actual = profile_variant(query), profile_variant(title)
     stated_kind = description_product_kind(description)
+    main_product = bool(wanted.tokens & {'jersey', 'phone', 'smartphone', 'iphone', 'headphone', 'headphones', 'earbuds', 'laptop', 'notebook', 'television', 'tv', 'controller', 'gamepad'})
+    if main_product and wanted.kind != 'accessory' and actual.kind == 'accessory':
+        return 'accessory, not the requested main product'
     if wanted.model_ids:
         if actual.model_ids != wanted.model_ids:
             return f"set number does not match {', '.join(wanted.model_ids)} in the title"
