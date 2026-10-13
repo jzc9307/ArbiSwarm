@@ -183,8 +183,8 @@ $('#copilotInput').addEventListener('input', () => { composerDraft = null; sizeC
 function offerKey(item) { return item.offer_id || `${item.marketplace}:${item.listing_id}`; }
 function chatContext() {
   const request = currentRequest || buildRequest();
-  const fields = ['title', 'marketplace', 'price', 'resale_estimate_myr', 'estimated_profit_myr', 'estimated_margin_pct', 'total_cost_myr', 'platform_fee_myr', 'shipping_cost_myr', 'is_profitable', 'risk_level', 'reasoning', 'red_flags', 'variant_label', 'variant_kind', 'group_id', 'resale_confidence', 'cost_warning'];
-  return { source_mode: currentResponse?.source_mode || request.source_mode, query: currentResponse?.query || request.query, max_purchase_price: request.max_purchase_price, marketplaces: request.marketplaces,
+  const fields = ['title', 'marketplace', 'price', 'resale_estimate_myr', 'estimated_profit_myr', 'estimated_margin_pct', 'total_cost_myr', 'platform_fee_myr', 'shipping_cost_myr', 'is_profitable', 'risk_level', 'reasoning', 'red_flags', 'variant_label', 'variant_kind', 'group_id', 'resale_confidence', 'cost_warning', 'lens_match'];
+  return { ...(window.ArbiLens?.chatContext(currentResponse) || {}), source_mode: currentResponse?.source_mode || request.source_mode, query: currentResponse?.query || request.query, max_purchase_price: request.max_purchase_price, marketplaces: request.marketplaces,
     selected_offer_id: selectedOfferId, source_errors: currentResponse?.source_errors || [], discarded_count: currentResponse?.discarded?.length || 0,
     visible_marketplaces:viewFilters.markets, visible_variant_kind:viewFilters.kind, view_max_price:viewFilters.maxPrice, visible_offer_ids:visibleOffers().map(offerKey), total_offer_count:currentResponse?.decisions.length || 0,
     offers: (currentResponse?.decisions || []).map((item) => ({offer_id: offerKey(item), ...Object.fromEntries(fields.filter((key) => item[key] != null).map((key) => [key, item[key]]))})) };
@@ -406,6 +406,7 @@ async function runChatShortcut(draft) {
 async function runSearchFromChat(action, bubble) {
   const base = currentRequest || buildRequest();
   const request = {...base, query:action.query, max_purchase_price:action.max_purchase_price, marketplaces:action.marketplaces, pricing_mode:action.pricing_mode || base.pricing_mode};
+  if (!action.use_reference) delete request.lens_reference_id;
   if (request.pricing_mode === 'auto') request.resale_estimate = null;
   restoreForm(request, {});
   const state = document.createElement('div'); state.className = 'chat-search-state is-running';
@@ -616,6 +617,7 @@ form.addEventListener('submit', async (event) => {
 function buildRequest() {
   const pricingMode = $('input[name="pricingMode"]:checked').value;
   return {
+    ...(window.ArbiLens?.searchFields() || {}),
     query: $('#query').value.trim(),
     match_mode: $('#matchMode').value,
     pricing_mode: pricingMode,
@@ -632,6 +634,8 @@ async function executeSearch(request, options = {}) {
   selectedOfferId = null;
   currentRequest = request;
   currentResponse = null;
+  window.ArbiLens?.syncRequest(request);
+  window.ArbiLens?.renderBoard(null);
   viewFilters = {markets:[],kind:'',maxPrice:null}; viewRevision++;
   updateChatContext();
   setLoading(true, request.source_mode);
@@ -709,7 +713,9 @@ function setLoading(active, sourceMode = 'live') {
   startBtn.disabled = active;
   startBtn.querySelector('span').textContent = active ? 'Analyzing…' : 'Run analysis';
   runPanel.hidden = !active;
+  runPanel.classList.toggle('is-lens-run',active && !!currentRequest?.lens_reference_id);
   if (!active) return;
+  if (currentRequest?.lens_reference_id) { renderLoadingStage(0,sourceMode,0); return; }
   let progress = 7;
   let stage = 0;
   renderLoadingStage(stage, sourceMode, progress);
@@ -725,6 +731,14 @@ function setLoading(active, sourceMode = 'live') {
 }
 
 function renderLoadingStage(index, sourceMode, progress) {
+  if (currentRequest?.lens_reference_id) {
+    $('#runTitle').textContent = 'Finding candidates for your reference';
+    $('#runText').textContent = 'Searching selected marketplaces, then comparing up to six available listing photos. Additional results stay unverified.';
+    $('#runPercent').textContent = 'LENS';
+    $('#runProgress').style.width = '45%';
+    $('#runLog').innerHTML = '<span class="active"><i>●</i>Live search in progress · not a measured completion percentage</span>';
+    return;
+  }
   const [title, text] = pipelineStages[index];
   $('#runTitle').textContent = sourceMode === 'demo' && index === 0 ? 'Opening verified demo snapshot' : title;
   $('#runText').textContent = text;
@@ -849,13 +863,24 @@ function renderBoardView() {
   const countText = Object.entries(data.source_counts || {}).map(([name, count]) => `${marketplaceName(name)} ${count}`).join(' · ');
   $('#resultsMeta').textContent = `${countText || providerLabel(data.provider)} · ${data.pricing_mode === 'auto' ? 'market-priced' : 'manual resale'} · ${data.ai_mode === 'gemini' ? 'AI configured · rules decide' : 'rules verified'}`;
   renderSourceBar(data);
+  window.ArbiLens?.renderBoard(data);
   results.replaceChildren();
   if (!decisions.length && data.decisions.length) {
     const empty = document.createElement('div'); empty.className = 'empty-state';
     empty.innerHTML = '<span>◎</span><h3>No saved offers match these filters.</h3><p>Your other results are still here. Reset the filters to see them.</p><button type="button" class="watch-button">Reset filters</button>';
     $('button',empty).addEventListener('click',() => applyViewFilters({markets:[],kind:'',maxPrice:null})); results.appendChild(empty);
   } else if (!decisions.length) results.appendChild(emptyState(data.total_scraped));
-  else groups.forEach((group, index) => results.appendChild(renderComparisonGroup(group, index)));
+  else if (data.lens_context) {
+    const labels = {likely_match:['Likely same product','Visible design and supplied identity evidence are consistent. Verify the exact variant.'],similar:['Visually similar','Resemblance found, but the exact product is not established.'],unverified:['Not visually verified','Outside the shortlist, unavailable photos, or inconclusive evidence.'],different:['Visible differences','These candidates conflict with the reference; kept separate for transparency.']};
+    Object.entries(labels).forEach(([status,[title,note]]) => {
+      const offers = decisions.filter((item) => (item.lens_match?.status || 'unverified') === status);
+      if (!offers.length) return;
+      const section = document.createElement('section'); section.className = 'lens-result-section';
+      section.innerHTML = `<header class="lens-result-heading"><span></span><div><h3>${title}</h3><p>${note}</p></div><b>${offers.length}</b></header>`;
+      ArbiChatState.filterGroups(groups,offers).forEach((group,index) => section.appendChild(renderComparisonGroup(group,index)));
+      results.appendChild(section);
+    });
+  } else groups.forEach((group, index) => results.appendChild(renderComparisonGroup(group, index)));
 }
 
 function renderComparisonGroup(group, index) {
@@ -903,6 +928,7 @@ function renderCard(item, index) {
       <div class="deal-topline"><span class="decision ${item.is_profitable ? 'positive' : 'negative'}">${item.is_profitable ? 'BUY SIGNAL' : 'PASS'}</span><span class="risk risk-${item.risk_level}">${item.risk_level} risk</span></div>
       <h3>${escapeHtml(item.title)}</h3>
       <p class="seller-line"><b>From ${marketplaceName(item.marketplace)}</b> · ${seller} · ${escapeHtml(item.true_condition)}</p>
+      ${item.lens_match ? `<div class="lens-match-evidence" data-match="${escapeAttr(item.lens_match.status)}"><strong>⌖ ${({likely_match:'Likely same product',similar:'Visually similar',different:'Visible differences',unverified:'Not visually verified'})[item.lens_match.status] || 'Not verified'}</strong><p>${escapeHtml(item.lens_match.reason)}${item.lens_match.differences?.length ? `<br>${item.lens_match.differences.map(escapeHtml).join(' · ')}` : ''}</p></div>` : ''}
       ${item.original_currency && item.original_currency !== 'MYR' ? `<p class="import-evidence">${escapeHtml(item.original_currency)} ${Number(item.original_price).toFixed(2)} → ${formatMoney(item.price)}<small>Reference FX ${escapeHtml(item.fx_rate_date || 'date unavailable')} · payment rates may differ</small></p>` : ''}
       ${item.cost_warning ? `<p class="import-evidence">${escapeHtml(item.cost_warning)}</p>` : ''}
       <div class="confidence-line"><span><i style="--score:${confidence}%"></i></span><b>${confidence}/100 seller confidence</b><em>${escapeHtml(item.seller_confidence_label || 'limited')}</em></div>
@@ -1047,7 +1073,10 @@ function getWatchlists() { return getStored(WATCHLIST_KEY); }
 
 function saveHistory(request, response) {
   const signature = JSON.stringify({ query: request.query.toLowerCase(), pricing: request.pricing_mode, resale: request.resale_estimate, max: request.max_purchase_price, mode: request.source_mode, marketplaces: [...request.marketplaces].sort() });
-  const entry = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, signature, created_at: new Date().toISOString(), request, response };
+  // Save evidence text, never the user's photo or a usable ephemeral token.
+  const savedRequest = {...request}; delete savedRequest.lens_reference_id;
+  const savedResponse = {...response, lens_context:response.lens_context ? {...response.lens_context, reference_id:null} : null};
+  const entry = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, signature, created_at: new Date().toISOString(), request:savedRequest, response:savedResponse };
   const next = [entry, ...getHistory().filter((item) => item.signature !== signature)].slice(0, HISTORY_LIMIT);
   try { localStorage.setItem(HISTORY_KEY, JSON.stringify(next)); }
   catch (_) {
@@ -1086,6 +1115,7 @@ function restoreHistory(id) {
   if (!entry?.response) return;
   restoreForm(entry.request || {}, entry.response);
   currentRequest = entry.request;
+  window.ArbiLens?.syncRequest(currentRequest);
   viewFilters = {markets:[],kind:'',maxPrice:null}; viewRevision++;
   selectedOfferId = null;
   currentResponse = entry.response;
@@ -1096,6 +1126,7 @@ function restoreHistory(id) {
 }
 
 function saveCurrentWatchlist() {
+  if (currentRequest?.lens_reference_id || currentResponse?.lens_context) { showToast('Lens photos are temporary. Start a text-only search to save a watchlist.'); return false; }
   if (!currentRequest || !currentResponse) {
     showToast('Run a search first, then save it');
     return false;
@@ -1235,6 +1266,13 @@ function signedMoney(value) { const number = Number(value) || 0; return `${numbe
 function shorten(value, length) { const text = String(value || 'Matched product'); return text.length > length ? `${text.slice(0, length - 1)}…` : text; }
 function escapeHtml(value) { const div = document.createElement('div'); div.textContent = String(value ?? ''); return div.innerHTML; }
 function escapeAttr(value) { return escapeHtml(value).replaceAll('`', '&#96;'); }
+
+window.ArbiWorkspace = {
+  isBusy: () => operationBusy || chatBusy,
+  buildRequest, executeSearch, restoreForm, updateChatContext, openCopilot, showToast,
+  message: addChatMessage,
+  getResponse: () => currentResponse,
+};
 
 loadHealth();
 updateSourceNote();

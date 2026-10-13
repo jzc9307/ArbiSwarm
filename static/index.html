@@ -7,6 +7,7 @@
   <title>ArbiSwarm — Deal intelligence</title>
   <link rel="stylesheet" href="/static/style.css?v=2.4.0">
   <link rel="stylesheet" href="/static/copilot.css?v=3.0.1">
+  <link rel="stylesheet" href="/static/lens.css?v=2.5.1">
 </head>
 <body>
   <header class="topbar">
@@ -67,7 +68,7 @@
       <form id="searchForm" class="search-form">
         <label class="field field-query">
           <span>What are you hunting?</span>
-          <input id="query" name="query" type="search" value="Labubu Macaron" placeholder="e.g. Sony WH-1000XM5" minlength="2" maxlength="120" required autocomplete="off">
+          <div class="query-with-lens"><input id="query" name="query" type="search" value="Labubu Macaron" placeholder="A name, a model, or a photo…" minlength="2" maxlength="120" required autocomplete="off"><button class="lens-camera" id="openLens" type="button" title="Search by photo" aria-label="Open Arbi Lens photo search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h4l2-3h4l2 3h4v13H4z"/><circle cx="12" cy="13" r="4"/></svg></button></div>
         </label>
         <div class="field resale-field">
           <span>Resale model</span>
@@ -89,6 +90,8 @@
         </button>
         <div class="match-settings"><label for="matchMode">Product matching</label><select id="matchMode"><option value="exact">Exact product &amp; variant</option><option value="related">Include related variants</option></select><small>Set numbers, seasons and requested sizes must match. Related items keep separate valuations.</small></div>
       </form>
+      <button id="lensInvite" class="lens-invite" type="button"><span class="lens-mini-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="12" cy="12" r="6.5"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/></svg></span><span>Don't know the name? <b>Start with a photo.</b></span><span aria-hidden="true">↗</span></button>
+      <div id="lensSearchReference" class="lens-search-reference" hidden></div>
     </section>
 
     <section id="runPanel" class="run-panel" hidden aria-live="polite">
@@ -128,6 +131,7 @@
         <div class="results-heading-actions"><p id="resultsMeta"></p><button id="watchSearchBtn" class="watch-button" type="button">＋ Watch this search</button></div>
       </div>
       <div id="sourceBar" class="source-bar" aria-label="Marketplace freshness"></div>
+      <div id="lensBoardReference" hidden></div>
       <section class="board-filters" aria-label="Filter saved search results">
         <div class="filter-heading"><span>Refine your board</span><small>No new crawl</small><button id="resetFilters" type="button">Reset</button></div>
         <div id="marketFilters" class="market-filters" role="group" aria-label="Marketplace filters"></div>
@@ -194,10 +198,11 @@
       <div id="copilotSelection" class="copilot-selection" hidden><div id="selectedIdentity"></div><button class="chat-icon" type="button" aria-label="Clear selected listing">×</button></div>
       <div id="copilotActionTray" class="copilot-action-tray" aria-hidden="true" inert><div><div id="copilotMenu" class="copilot-menu" aria-label="All workspace actions"></div></div></div>
     </div>
+    <div id="lensChatReference" hidden></div>
     <div id="copilotMessages" class="copilot-messages" role="log" aria-live="polite"><div id="copilotOverview" class="copilot-overview"></div></div>
     <div id="copilotTools" class="copilot-tools" aria-label="Current search actions"></div>
     <div id="copilotBudget" class="copilot-budget" hidden><label for="copilotBudgetValue">New purchase ceiling (RM)</label><div><input id="copilotBudgetValue" type="number" min="1" max="1000000" step="1"><button id="applyCopilotBudget" type="button">Use in message</button><button id="cancelCopilotBudget" type="button" aria-label="Cancel budget change">×</button></div></div>
-    <form id="copilotForm" class="copilot-composer"><label class="sr-only" for="copilotInput">Message Arbi</label><textarea id="copilotInput" rows="1" maxlength="2000" placeholder="Ask about your search…" required></textarea><button id="copilotSend" type="submit" aria-label="Send message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 20V4m-7 7 7-7 7 7"/></svg></button></form>
+    <form id="copilotForm" class="copilot-composer"><button id="chatOpenLens" class="lens-chat-attach" type="button" title="Search with a photo" aria-label="Attach a reference photo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l9-9"/></svg></button><label class="sr-only" for="copilotInput">Message Arbi</label><textarea id="copilotInput" rows="1" maxlength="2000" placeholder="Ask about your search…" required></textarea><button id="copilotSend" type="submit" aria-label="Send message"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 20V4m-7 7 7-7 7 7"/></svg></button></form>
     <p id="copilotStatus" class="copilot-status" role="status">Choose a shortcut, review your message, then send.</p>
   </aside>
 
@@ -208,8 +213,40 @@
     <button id="confirmSelection" class="selection-confirm" type="button">Use this item <span>→</span></button>
   </dialog>
 
+  <dialog id="lensDialog" class="lens-dialog" aria-labelledby="lensTitle">
+    <div class="lens-dialog-inner">
+      <header class="lens-header"><span class="lens-brand"><i aria-hidden="true">⌖</i> ARBI LENS <small>PHOTO → POSSIBILITY</small></span><button id="closeLens" class="lens-icon-button" type="button" aria-label="Close Arbi Lens">×</button></header>
+      <div class="lens-layout">
+        <section class="lens-visual" aria-label="Reference photo">
+          <div id="lensDropzone" class="lens-dropzone" tabindex="0" role="button" aria-label="Choose or drop a product photo">
+            <div class="lens-aperture" aria-hidden="true"><span></span><svg viewBox="0 0 80 80" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 29V14h15m22 0h15v15M14 51v15h15m22 0h15V51"/><circle cx="40" cy="40" r="12"/><path d="M40 22v5m0 26v5M22 40h5m26 0h5"/></svg></div>
+            <strong>A photo is all it takes.</strong><p>Drop your inspiration here<br>or choose a photo to get started.</p><span class="lens-upload-pill">Choose photo <b>＋</b></span><small>JPG, PNG, WebP · up to 6 MB</small>
+          </div>
+          <div id="lensPhotoWorkspace" hidden>
+            <div class="lens-photo-topline"><span>YOUR REFERENCE</span><button id="lensReplace" type="button">Replace ↗</button></div>
+            <div id="lensCropStage" class="lens-crop-stage"><img id="lensPreview" alt="Your selected reference photo" draggable="false"><div id="lensCropBox" class="lens-crop-box" hidden><i></i><i></i><i></i><i></i><span>Selected area</span></div><div class="lens-scan-beam" aria-hidden="true"></div><span class="lens-corner tl"></span><span class="lens-corner tr"></span><span class="lens-corner bl"></span><span class="lens-corner br"></span></div>
+            <div class="lens-crop-tools"><span id="lensCropHint">Drag over the product to focus your search.</span><button id="lensResetCrop" type="button">Reset crop</button></div>
+            <details class="lens-accessible-crop"><summary>Precise crop controls</summary><div><label>Left<input data-crop-side="0" type="range" min="0" max="95" value="0"></label><label>Top<input data-crop-side="1" type="range" min="0" max="95" value="0"></label><label>Right<input data-crop-side="2" type="range" min="5" max="100" value="100"></label><label>Bottom<input data-crop-side="3" type="range" min="5" max="100" value="100"></label></div></details>
+            <div id="lensObjectChoices" class="lens-object-choices" aria-label="Detected objects"></div>
+          </div>
+          <input id="lensFile" class="sr-only" type="file" accept="image/jpeg,image/png,image/webp">
+        </section>
+        <section class="lens-intelligence">
+          <div class="lens-steps" aria-label="Photo search steps"><span class="active" data-lens-step="0">01 <b>Upload</b></span><i></i><span data-lens-step="1">02 <b>Identify</b></span><i></i><span data-lens-step="2">03 <b>Compare</b></span></div>
+          <div id="lensWelcome" class="lens-view"><p class="lens-kicker">LESS TYPING. MORE FINDING.</p><h2 id="lensTitle">See it.<br><em>Find it.</em></h2><p class="lens-description">Turn something you love into a search worth exploring.</p><div class="lens-capabilities"><div><span>01</span><p><b>Find the product</b><small>Read visible details, labels and design.</small></p></div><div><span>02</span><p><b>Keep you in control</b><small>Confirm the name. Correct the details.</small></p></div><div><span>03</span><p><b>Compare the evidence</b><small>Check a small shortlist across your markets.</small></p></div></div></div>
+          <div id="lensScanning" class="lens-view" hidden><p class="lens-kicker"><span class="lens-live-dot"></span> GEMINI VISION</p><h3>Making sense<br>of your photo.</h3><p class="lens-description">Reading visible design, text and product details. Unclear details stay unclear.</p><div class="lens-scan-progress"><span></span></div><p class="lens-scan-caption">One recognition request · not searching marketplaces yet</p></div>
+          <div id="lensReview" class="lens-view" hidden><p class="lens-kicker">A STARTING POINT, NOT A GUESS TO HIDE.</p><div class="lens-confidence-row"><h3 id="lensIdentityName"></h3><span id="lensConfidence"></span></div><div id="lensObservations" class="lens-observations"></div><p id="lensUncertainty" class="lens-uncertainty"></p><label class="lens-query-label" for="lensQuery">SEARCH NAME <span>EDITABLE</span></label><input id="lensQuery" class="lens-query" type="text" maxlength="120" minlength="2"><div class="lens-mode-switch" role="group" aria-label="Photo matching goal"><button type="button" data-lens-mode="product" aria-pressed="true">Find this product</button><button type="button" data-lens-mode="similar" aria-pressed="false">Explore similar</button></div><p id="lensModeHint" class="lens-mode-hint">Prefer the identified product. Exact model and variant still need evidence.</p><button id="lensSearch" class="lens-search-button" type="button">Search selected markets <span>↗</span></button><p id="lensUsage" class="lens-usage"></p></div>
+          <div id="lensError" class="lens-inline-error" role="alert" hidden></div>
+          <button id="lensIdentify" class="lens-search-button" type="button" hidden>Identify this photo <span>✦</span></button>
+        </section>
+      </div>
+      <footer class="lens-footer"><span><i aria-hidden="true">◇</i> Your photo is sent to Gemini only when you press Identify. No photo is saved to history.</span><span>Appearance ≠ authenticity</span></footer>
+    </div>
+  </dialog>
+
   <footer><span>ArbiSwarm</span><p>Decision support, not a guarantee of authenticity or profit.</p></footer>
-  <script src="/static/chat-state.js?v=3.1.0"></script>
-  <script src="/static/app.js?v=3.2.0"></script>
+  <script src="/static/chat-state.js?v=3.2.0"></script>
+  <script src="/static/app.js?v=3.3.0"></script>
+  <script src="/static/lens.js?v=2.5.1"></script>
 </body>
 </html>

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from urllib.parse import quote, urljoin, urlparse
 
 import httpx
@@ -12,6 +14,7 @@ import config
 import scraper as carousell
 from international_markets import InternationalSearchError, search_ebay, search_etsy
 from search_intent import query_terms, SearchIntent, plan_search
+from agents.runtime import record
 
 
 SUPPORTED_MARKETPLACES = ("carousell", "lazada", "mudah", "shopee", "ebay", "etsy")
@@ -423,7 +426,8 @@ def _search_shopee_provider(query: str, limit: int) -> list[dict]:
         raise MarketplaceSearchError(f"Shopee data provider failed: {exc}") from exc
     if isinstance(payload, dict) and payload.get("code") not in (None, 0):
         raise MarketplaceSearchError(
-            str(payload.get("msg") or "Nexscope rejected the Shopee search request.")
+            'Nexscope marketplace retrieval: ' + str(payload.get("msg") or "Shopee search rejected.")
+            + ' This is separate from Gemini analysis quota.'
         )
     data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
     records = (data.get("products") or data.get("items") or []) if isinstance(data, dict) else []
@@ -495,6 +499,16 @@ ADAPTERS = {
 }
 
 
+def _safe_provider_message(exc: Exception) -> str:
+    message = str(exc)
+    for secret in (*config.GEMINI_API_KEYS, config.GEMINI_API_KEY, config.REEF_API_KEY,
+                   config.NEXSCOPE_API_KEY, config.EBAY_CLIENT_SECRET,
+                   config.ETSY_API_KEY, config.ETSY_SHARED_SECRET):
+        if secret:
+            message = message.replace(secret, '[redacted]')
+    return message
+
+
 def search_many(query: str, selected: list[str], total_limit: int, *, intent: SearchIntent | None = None) -> tuple[list[dict], dict, list[dict]]:
     unknown = [name for name in selected if name not in ADAPTERS]
     if unknown:
@@ -505,10 +519,9 @@ def search_many(query: str, selected: list[str], total_limit: int, *, intent: Se
     # to "discover" missing results.
     per_source_limit = max(3, total_limit)
     intent = intent or plan_search(query, use_ai=False)
-    all_listings: list[dict] = []
-    counts: dict[str, int] = {}
-    errors: list[dict] = []
-    for name in selected:
+    def run_source(name):
+        errors = []
+        record('retrieval', 'started', marketplace=name, quota_system='marketplace_provider')
         try:
             unique: dict[str, dict] = {}
             wanted = query_terms(query)
@@ -518,7 +531,7 @@ def search_many(query: str, selected: list[str], total_limit: int, *, intent: Se
                 except (MarketplaceSearchError, carousell.MarketplaceError, InternationalSearchError) as exc:
                     if not unique:
                         raise
-                    errors.append({'marketplace': name, 'message': f'Additional query failed; earlier results retained. {exc}'})
+                    errors.append({'marketplace': name, 'message': f'Additional query failed; earlier results retained. {_safe_provider_message(exc)}', 'quota_system': 'marketplace_provider'})
                     break
                 for row in fetched:
                     key = str(row.get('id') or row.get('url') or len(unique))
@@ -527,14 +540,28 @@ def search_many(query: str, selected: list[str], total_limit: int, *, intent: Se
                 if matched >= per_source_limit:
                     break
             rows = sorted(unique.values(), key=lambda row: intent.matches(str(row.get('title', '')), str(row.get('description', '')), wanted), reverse=True)[:per_source_limit]
-            counts[name] = len(rows)
-            all_listings.extend(rows)
+            record('retrieval', 'completed', marketplace=name, count=len(rows), quota_system='marketplace_provider')
+            return rows, errors
         except (MarketplaceSearchError, carousell.MarketplaceError, InternationalSearchError) as exc:
-            counts[name] = 0
-            errors.append({"marketplace": name, "message": str(exc)})
+            message = _safe_provider_message(exc)
+            errors.append({"marketplace": name, "message": message, 'quota_system': 'marketplace_provider'})
         except Exception:
             # A malformed upstream record must not crash healthy marketplaces
             # or relay headers/credentials embedded in an exception message.
-            counts[name] = 0
             errors.append({'marketplace': name, 'message': f'{DISPLAY_NAMES[name]} returned an unexpected product format. Other sources continue.'})
+        record('retrieval', 'failed', marketplace=name, quota_system='marketplace_provider')
+        return [], errors
+
+    all_listings, counts, errors = [], {}, []
+    if not selected:
+        return all_listings, counts, errors
+    # Independent source tools run concurrently; each source's alias requests
+    # remain sequential and bounded. Preserve source order in the response.
+    with ThreadPoolExecutor(max_workers=min(4, len(selected))) as pool:
+        futures = [(name, pool.submit(copy_context().run, run_source, name)) for name in selected]
+        for name, future in futures:
+            rows, failures = future.result()
+            counts[name] = len(rows)
+            all_listings.extend(rows)
+            errors.extend(failures)
     return all_listings, counts, errors

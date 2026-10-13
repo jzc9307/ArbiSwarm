@@ -16,12 +16,24 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 # Never expose the pool through API responses, logging, or frontend assets.
 GEMINI_API_KEYS = tuple(dict.fromkeys(key.strip() for key in [
     GEMINI_API_KEY,
+    *(os.environ[name] for name in sorted(
+        (name for name in os.environ if name.startswith('GEMINI_API_KEY_')
+         and name.removeprefix('GEMINI_API_KEY_').isdigit()),
+        key=lambda name: int(name.removeprefix('GEMINI_API_KEY_')))),
     *os.environ.get("GEMINI_API_KEYS", "").split(","),
-    *(os.environ[name] for name in sorted(os.environ)
-      if name.startswith("GEMINI_API_KEY_") and name.removeprefix("GEMINI_API_KEY_").isdigit()),
 ] if key.strip()))
 CHEAP_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
-FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.8-flash")
+FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.6-flash")
+
+# Conservative, process-local free-tier guards. Unlabelled keys share a budget;
+# explicitly label independent Google projects before treating them separately.
+GEMINI_KEY_PROJECTS = tuple(part.strip() for part in os.environ.get('GEMINI_KEY_PROJECTS', '').split(','))
+GEMINI_LOCAL_RPM = max(1, int(os.environ.get('GEMINI_LOCAL_RPM', '5')))
+GEMINI_LOCAL_RPD = max(1, int(os.environ.get('GEMINI_LOCAL_RPD', '20')))
+GEMINI_MAX_ATTEMPTS = max(1, min(5, int(os.environ.get('GEMINI_MAX_ATTEMPTS', '2'))))
+AI_OPERATION_BUDGET = max(1, min(8, int(os.environ.get('AI_OPERATION_BUDGET', '3'))))
+AI_SHORTLIST_SIZE = max(1, min(12, int(os.environ.get('AI_SHORTLIST_SIZE', '8'))))
+AI_EVIDENCE_TTL = max(60, int(os.environ.get('AI_EVIDENCE_TTL', '3600')))
 
 # Optional reliable Carousell data provider. If unset, the app attempts a direct
 # browser scrape and reports anti-bot blocks honestly instead of returning fake data.

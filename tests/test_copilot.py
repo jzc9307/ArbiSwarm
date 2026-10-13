@@ -139,6 +139,11 @@ class CopilotTests(unittest.TestCase):
 
 
 class LlmFallbackTests(unittest.TestCase):
+    def setUp(self):
+        from agents import _llm
+        _llm._cooldowns.clear(); _llm._limits.clear(); _llm._model_cooldowns.clear(); _llm._project_cooldowns.clear(); _llm._unavailable_models.clear()
+        copilot._plan_cache.clear()
+
     def test_gemini_deadline_never_falls_below_service_minimum(self):
         from agents._llm import call_json
         from types import SimpleNamespace
@@ -147,17 +152,17 @@ class LlmFallbackTests(unittest.TestCase):
             call_json('test','test',copilot.ChatPlan,timeout_ms=8000)
         self.assertGreaterEqual(client.call_args.kwargs['http_options']['timeout'],10000)
 
-    def test_quota_error_is_explained_without_exposing_exception_secrets(self):
+    def test_price_shortcut_does_not_spend_an_ai_request(self):
         from google.genai.errors import ClientError
         with patch.object(copilot,'is_enabled',return_value=True), patch.object(copilot,'call_json',side_effect=ClientError(429,{'error':{'message':'secret-value'}})):
             result = copilot.chat(copilot.ChatRequest(message='got any just for 250?',context={'query':'Liverpool jersey','max_purchase_price':300}))
         self.assertEqual(result['action']['type'],'filter')
-        self.assertEqual(result['ai_status']['state'],'rate_limited')
-        self.assertIn('429',result['ai_status']['message'])
+        self.assertEqual(result['ai_status']['state'],'local')
+        self.assertIn('no new Gemini request',result['ai_status']['message'])
         self.assertNotIn('secret-value',str(result))
 
     def test_ai_receives_history_and_current_filters(self):
-        request = copilot.ChatRequest(message='anything cheaper than that?',history=[{'role':'user','content':'Only Shopee please'}],context={'query':'LEGO 75192','visible_marketplaces':['shopee'],'view_max_price':3000})
+        request = copilot.ChatRequest(message='Would the alternative we discussed make sense for my needs?',history=[{'role':'user','content':'Only Shopee please'}],context={'query':'LEGO 75192','visible_marketplaces':['shopee'],'view_max_price':3000})
         with patch.object(copilot,'is_enabled',return_value=True), patch.object(copilot,'call_json',return_value=copilot.ChatPlan(intent='filter',max_purchase_price=2500)) as model:
             result = copilot.chat(request)
         self.assertIn('Only Shopee please',model.call_args.args[1])

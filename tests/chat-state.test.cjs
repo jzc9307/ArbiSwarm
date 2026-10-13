@@ -30,6 +30,11 @@ test('drag position keeps every edge inside the viewport', () => {
   assert.deepEqual(clampPosition(9999, 9999, 468, 760, 1440, 900), {x:960,y:128});
   assert.deepEqual(clampPosition(500, 60, 468, 760, 1440, 900), {x:500,y:60});
 });
+test('filtered group heading describes a visible offer, not a hidden product', () => {
+  const offers = [{offer_id:'a',title:'Hidden accessory'},{offer_id:'b',title:'Visible headphones'}];
+  const result=filterGroups([{name:'Hidden accessory',offers}],offers.slice(1));
+  assert.equal(result[0].name,'Visible headphones');
+});
 test('resize clamps a floating panel on a narrow screen', () => {
   assert.deepEqual(clampPosition(800, 80, 366, 720, 390, 844), {x:12,y:80});
   assert.deepEqual(clampPosition(800, 80, 366, 720, 390, 500), {x:12,y:12});

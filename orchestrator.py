@@ -1,7 +1,8 @@
-"""Phase 2: The Multi-Agent Swarm, wired with LangGraph.
-Analyst -> Vision -> Strategist, with ONE conditional loop-back:
-if Analyst's confidence is low, Strategist can bounce it back for a re-read
-with the vision findings as extra context, before deciding."""
+"""Adaptive swarm: shared batched evidence, then deterministic decisions.
+
+The older LangGraph builder is retained for explicit experiments, but the web
+and compatibility entry points no longer run a per-listing LLM graph.
+"""
 from functools import lru_cache
 from typing import TypedDict, Optional, overload, Literal
 from langgraph.graph import StateGraph, END
@@ -73,26 +74,38 @@ def build_graph():
 
 
 @overload
-def run_swarm(listing: Listing, resale_estimate: float, include_evidence: Literal[False] = False) -> StrategistDecision: ...
+def run_swarm(listing: Listing, resale_estimate: float, include_evidence: Literal[False] = False, *, cost_aware: bool = False, analysis: ContextAnalysis | None = None) -> StrategistDecision: ...
 
 
 @overload
 def run_swarm(
-    listing: Listing, resale_estimate: float, include_evidence: Literal[True]
+    listing: Listing, resale_estimate: float, include_evidence: Literal[True], *, cost_aware: bool = False, analysis: ContextAnalysis | None = None
 ) -> tuple[StrategistDecision, ContextAnalysis, VisionCheck]: ...
 
 
-def run_swarm(listing: Listing, resale_estimate: float, include_evidence: bool = False):
-    app = build_graph()
-    initial: SwarmState = {
-        "listing": listing,
-        "resale_estimate": resale_estimate,
-        "analysis": None,
-        "vision": None,
-        "decision": None,
-        "reanalysis_done": False,
-    }
-    final_state = app.invoke(initial)
-    if include_evidence:
-        return final_state["decision"], final_state["analysis"], final_state["vision"]
-    return final_state["decision"]
+def run_swarm(listing: Listing, resale_estimate: float, include_evidence: bool = False, *, cost_aware: bool = False, analysis: ContextAnalysis | None = None):
+    """Compatibility facade: one shared evidence pass, deterministic economics.
+
+    Web search supplies its batch result. Legacy callers get a cached one-item
+    batch, never the old context/vision/strategy/reanalysis fan-out.
+    """
+    evidence_reviewed = analysis is not None
+    if analysis is None:
+        if cost_aware:
+            analysis = context_analyst._deterministic(listing)
+        else:
+            from agents.batch_analyst import analyze_shortlist, offer_id
+            result = analyze_shortlist([listing], listing.title)
+            key = offer_id(listing)
+            analysis = result.analyses[key]
+            evidence_reviewed = (result.statuses[key] in {'ai_completed', 'cache_reused'}
+                                 and result.findings[key].relevance == 'match'
+                                 and not analysis.needs_clarification)
+    vision = VisionCheck(consistency_score=None, mismatches=['No per-listing vision call. Photo searches have separate bounded visual evidence.'], images_checked=0)
+    decision = lead_strategist.decide(listing, analysis, vision, resale_estimate, use_ai=False)
+    if listing.source != 'demo_cache' and not evidence_reviewed:
+        decision.is_profitable = False
+        decision.risk_level = 'high'
+        decision.negotiation_message = None
+        decision.reasoning = 'Needs verification: no validated matching AI evidence review. Displayed profit is hypothetical, not a buy signal.'
+    return (decision, analysis, vision) if include_evidence else decision

@@ -58,6 +58,7 @@ def decide(
     analysis: ContextAnalysis,
     vision: VisionCheck,
     resale_estimate: float,
+    *, use_ai: bool = True,
 ) -> StrategistDecision:
     shipping = listing.shipping_cost_myr
     if shipping is None and not listing.landed_cost_verified:
@@ -99,7 +100,7 @@ def decide(
         rejection_reasons.append("image consistency is too low")
     narrative = _fallback_narrative(listing, analysis, margin, profitable, rejection_reasons)
 
-    if is_enabled():
+    if use_ai and is_enabled():
         try:
             narrative = call_json(
                 SYSTEM_PROMPT,

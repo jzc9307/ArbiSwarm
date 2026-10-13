@@ -10,7 +10,8 @@
       const visibleIds = new Set(offers.map((item) => item.offer_id || `${item.marketplace}:${item.listing_id}`));
       return groups.map((group) => {
         const visible = group.offers.filter((item) => visibleIds.has(item.offer_id || `${item.marketplace}:${item.listing_id}`));
-        return {...group, offers:visible, marketplaces:[...new Set(visible.map((item) => item.marketplace))], offer_count:visible.length};
+        const name = visible.some((item) => item.title === group.name) ? group.name : visible[0]?.title || group.name;
+        return {...group, name, offers:visible, marketplaces:[...new Set(visible.map((item) => item.marketplace))], offer_count:visible.length};
       }).filter((group) => group.offers.length);
     },
     clampPosition(x, y, width, height, viewportWidth, viewportHeight, inset = 12) {

@@ -144,6 +144,10 @@ class KeyPoolTests(unittest.TestCase):
         for context in self.config_patches:
             context.start()
         _llm._cooldowns.clear()
+        _llm._limits.clear()
+        _llm._project_cooldowns.clear()
+        _llm._model_cooldowns.clear()
+        _llm._unavailable_models.clear()
 
     def tearDown(self):
         _llm._cooldowns.clear()
@@ -197,7 +201,8 @@ class KeyPoolTests(unittest.TestCase):
     def test_pool_only_configuration_is_enabled_and_health_has_no_keys(self):
         with patch.object(config, 'GEMINI_API_KEY', ''):
             self.assertTrue(_llm.is_enabled())
-            self.assertEqual(api.health()['ai_mode'], 'gemini')
+            self.assertTrue(api.health()['ai_configured'])
+            self.assertEqual(api.health()['ai_mode'], 'gemini' if _llm.ai_status()['state'] == 'connected' else 'deterministic')
             self.assertNotIn('fake-secondary', str(api.health()))
 
     def test_photo_agent_uses_shared_json_helper(self):

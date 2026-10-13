@@ -29,12 +29,17 @@ def _fetch_image(url: str) -> tuple[bytes, str] | None:
     if parsed.scheme != "https" or parsed.username or not any(host == suffix or host.endswith('.' + suffix) for suffix in _ALLOWED_IMAGE_HOST_SUFFIXES):
         return None
     try:
-        response = httpx.get(url, timeout=8, follow_redirects=False)
-        response.raise_for_status()
-        mime = response.headers.get("content-type", "").split(";", 1)[0]
-        if not mime.startswith("image/") or len(response.content) > 8_000_000:
-            return None
-        return response.content, mime
+        with httpx.stream('GET', url, timeout=8, follow_redirects=False) as response:
+            response.raise_for_status()
+            mime = response.headers.get("content-type", "").split(";", 1)[0]
+            if not mime.startswith("image/"):
+                return None
+            data = bytearray()
+            for chunk in response.iter_bytes(65536):
+                data.extend(chunk)
+                if len(data) > 8_000_000:
+                    return None
+            return bytes(data), mime
     except httpx.HTTPError:
         return None
 

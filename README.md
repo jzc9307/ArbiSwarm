@@ -1,11 +1,11 @@
 # ArbiSwarm
 
-ArbiSwarm is an evidence-first multi-market arbitrage analyzer for Carousell, Lazada, Mudah, Shopee Malaysia, and optional official eBay/Etsy sources. Gemini interprets search intent and equivalent terminology; deterministic code enforces identity, URL validation, and margin math. Three agents inspect context, photos, and risk before a deal reaches the dashboard.
+ArbiSwarm is an evidence-first multi-market arbitrage analyzer for Carousell, Lazada, Mudah, Shopee Malaysia, and optional official eBay/Etsy sources. An adaptive controller invokes specialized Gemini roles only when needed: intent planning, batched evidence analysis, photo comparison, explicit review and conversation. Deterministic code enforces identity checks, URL validation, safety gates and financial calculations. Marketplace retrieval tools are not themselves LLM agents.
 
 ## What changed from the prototype
 
 - One search fans out to selected local markets and optional eBay/Etsy adapters, normalizing their records into one contract. International sources require their own approved developer credentials.
-- A cached Gemini intent planner generates up to three equivalent queries and context-specific concept aliases across product categories. Local fallback covers common terms, season formats, and model punctuation. All original concepts are still required; numeric model IDs, brands, requested sizes and seasons cannot be silently broadened. This is provisional textual matching, not product authentication.
+- Clear product queries use local identity parsing; conversational goals can invoke a cached Gemini planner for up to three equivalent queries and context-specific concept aliases. An explicit `planning_mode: "ai"` also requests planning. Critical unresolved identity can return a clarification question before retrieval. Numeric model IDs, brands, requested sizes and seasons cannot be silently broadened. This is provisional textual matching, not authentication.
 - The purchase budget is optional and starts empty. Search first, then use saved-result filters to explore a price range.
 - Live search uses real marketplace product URLs and never invents ratings, descriptions, or images.
 - A Cloudflare/anti-bot challenge produces an honest `503 MARKETPLACE_BLOCKED` response. It does **not** silently return demo listings.
@@ -26,25 +26,43 @@ ArbiSwarm is an evidence-first multi-market arbitrage analyzer for Carousell, La
 ## Architecture
 
 ```text
-Carousell ─┐
-Lazada ────┤
-Mudah ─────┼─► marketplace adapters
-Shopee ────┘
-                  │
-                  ▼
-URL + provenance validation ──► relevance / price filters
-                                      │
-                                      ▼
-Context agent ──► Vision agent ──► Strategy agent
-                                      │
-                                      ▼
-                  product matching + valuation + trust
-                                      │
-                                      ▼
-                          FastAPI + web dashboard
+Search / contextual chat / photo
+              │
+              ▼
+Adaptive controller + request budget
+  ├─ clear query: local parsing
+  └─ ambiguous goal: cached manager/planner
+              │
+              ▼
+Concurrent marketplace tools → URL / identity validation
+              │
+              ▼
+Evidence cache → one bounded cross-market analyst batch
+  └─ photo search: vision comparison instead of text batch
+              │
+              ▼
+Comparable groups → resale bands → deterministic safety / fees
+              │
+              ▼
+Existing FastAPI response + execution / token evidence
+
+Saved-board commands: local, no Gemini request
+Flexible conversation: chat role, bounded board context
+Optional deeper review: explicit reviewer, no automatic extra loop
 ```
 
-The LangGraph flow still includes one bounded re-analysis handoff when the context agent says the listing text is too vague.
+The default API no longer runs a context/vision/strategy LLM chain for every listing. The old LangGraph builder remains available for explicit experiments, but normal searches use the bounded batch controller.
+
+### Free-tier call budget and evidence
+
+- A fresh clear text search normally uses **one analyst call**, reviewing at most eight new/changed listings across sources. A conversational goal may add one manager call. Empty candidate pools need no analyst call. Retries count as additional wire attempts; the default search cap is three attempts total.
+- Successful evidence is cached for one hour, keyed by the query, matching mode, model, role and listing contents. Changed price/description invalidates it. Repeated searches may review previously unreviewed candidates in another bounded batch; once all relevant evidence is cached, reuse needs no analyst call. Reopening browser history does not call the backend.
+- Listings outside the batch remain visible, explicitly unreviewed and unable to create automatic buy recommendations. Invalid, unsupported or uncertain AI findings cannot silently become validated matches. Reviewed matches, uncertain matches and unreviewed offers use separate valuation pools. Source quotes are grounding checks, not proof that the model's interpretation or product authenticity is correct.
+- Simple compare/filter/budget/explanation commands use saved-board data without Gemini. Flexible conversation uses the chat role with at most twelve offers and six recent turns; successful identical plans have a fifteen-minute in-memory cache. It is still a bounded assistant, not an unrestricted autonomous purchaser.
+- `agent_run` reports actual attempted requests, provider responses, cache reuse and server execution events. Tokens are summed from provider metadata only; missing metadata remains unknown, not zero. Failed requests may consume provider quota even when no token metadata is returned.
+- `GET /api/agents/runtime` exposes safe key-slot counts, local scheduler settings and recent runs; it never returns credentials. `POST /api/agents/review` accepts a query and up to three validated listings for an explicitly requested reviewer batch. This endpoint does not send alerts or change financial calculations.
+
+The frontend and its existing response fields are unchanged by this backend refactor. Execution metadata is additive; the existing animated loading percentage is not a live measurement of these server events. The new reviewer endpoint has no new frontend control.
 
 ## Arbi workspace
 
@@ -65,11 +83,10 @@ follow the view; resale estimates retain the original evidence pool. This view
 ceiling is separate from the search's max buy price. Old history is preserved
 but labeled as needing a rerun for current matching rules.
 
-Ask Arbi receives recent chat turns, the full saved evidence and active filters.
+Ask Arbi validates commands against the full saved board and active filters; model prompts receive a bounded, selected-aware evidence subset and recent chat turns.
 Follow-ups such as `got any just for 250?`, `compare only Shopee` and `show
 everything again` update those same board filters without starting a search.
-General language interpretation uses Gemini when reachable; local commands are
-an explicitly labeled fallback, not an LLM. Quota/rate-limit (429), access and
+General language interpretation uses Gemini when reachable; recognized local commands deliberately skip the model and are explicitly labeled, not presented as LLM reasoning. Quota/rate-limit (429), access and
 timeout failures are shown without exposing credentials. A configured key is
 not a verified connection. For 429 responses check your Gemini project's quota
 and billing; adding a marketplace data key does not enable conversational AI.
@@ -95,14 +112,23 @@ uvicorn api:app --reload
 
 The application automatically loads the project-root `.env` file on startup. Variables already exported in the shell take precedence.
 
-For multiple authorized Gemini keys, keep the primary and add a numbered backup:
+For five authorized Gemini keys, use the numbered slots in `.env.example`:
 
 ```dotenv
 GEMINI_API_KEY=primary_key
-GEMINI_API_KEY_2=backup_key
+GEMINI_API_KEY_2=analyst_key
+GEMINI_API_KEY_3=vision_key
+GEMINI_API_KEY_4=reviewer_key
+GEMINI_API_KEY_5=chat_key
 ```
 
-Alternatively, use `GEMINI_API_KEYS=backup_key_1,backup_key_2`. Duplicate keys are removed. All Gemini consumers (intent planning, chat and agents) share one helper: HTTP 429 cools the affected key and tries another available key. Each attempt has a timeout, so additional keys can increase worst-case response time. Retry hints are respected, each key is attempted at most once per call, and exhausted pools return to explicit local fallback. Cooldowns are process-local; a multi-worker deployment needs shared quota coordination. Other errors do not cycle keys. Keys belonging to the same Google project share quota; separate authorized projects may have separate limits. Restart the backend after changing `.env`; the app does not rewrite it or expose keys to the browser. See [Gemini rate limits](https://ai.google.dev/gemini-api/docs/rate-limits).
+Slots prefer manager, analyst, vision, reviewer and chat respectively; these are routing preferences, not five mandatory calls per search. Fewer keys still work. `GEMINI_API_KEYS` optionally adds backups after numbered slots; duplicate/empty values are removed. Project labels correspond to the resulting non-empty, deduplicated key order.
+
+Keys belonging to the same Google project share quota. Set `GEMINI_KEY_PROJECTS` to matching labels for shared projects, or different labels only for genuinely independent authorized projects. Unlabelled keys conservatively share one local budget. Labels coordinate local scheduling; they do not verify project ownership or increase Google quota. Defaults are five requests/minute and twenty/day per project/model; confirm your actual project's limits and adjust downward where necessary. Other applications' usage is not visible to these counters.
+
+All Gemini roles share the scheduler. HTTP 429 applies cooldowns and can use another available project within the two-attempt call cap. Known shared-project keys are not cycled to escape that project's cooldown. A 503 gets at most one short same-key retry, unless the provider asks to wait; repeated overload cools the model. A 404/410 can use the configured fallback model and is remembered to avoid repeated bad-model probes. No unbounded retry or per-listing re-analysis loop remains. Errors become explicit local/evidence-hold results, not fake successful AI work.
+
+Budgets, cooldowns, caches and execution history are process-local and reset on restart. They are guardrails, **not a live remaining-quota meter**. Use one backend worker for this local app; deployment requires durable/shared quota coordination. Restart after changing `.env`; the app never rewrites it or exposes keys to the browser. See [Gemini rate limits](https://ai.google.dev/gemini-api/docs/rate-limits).
 
 Open <http://127.0.0.1:8000>.
 
@@ -135,10 +161,26 @@ A general-purpose public Marketplace search integration could not be verified in
 
 The bundled snapshot is only for the `Labubu Macaron` demo. A different query returns zero records rather than unrelated Labubu data.
 
+## Arbi Lens — search with a photo
+
+Open the camera beside the search field, or the attachment button in Ask Arbi. Choose a JPEG, PNG or WebP (up to 6 MB / 24 megapixels), optionally crop the product, then press **Identify**. Review the visible details, uncertainty and editable search name before confirming a product or similar-products search. Your existing marketplace selection and optional budget still apply.
+
+Lens requires a configured Gemini key and live mode. It identifies a reference, retrieves keyword candidates through the existing marketplace adapters, then visually compares at most six available listing photos in one batch. This is not a marketplace-wide reverse-image index. Results are separated into likely matches, similar products, unverified results and different products; a resemblance is not proof of the exact model, completeness or authenticity. Lens results remain on evidence hold and do not send buy alerts.
+
+Cost controls: images are resized to at most 1024 pixels on their longest edge, recognition and comparison results are cached, and Lens skips the text planner and analyst batch. A fresh scan normally uses one recognition call and one comparison batch, in separate identify/search operations. Follow-up chat receives the reference description and recorded comparison evidence, not the photo again. Provider-reported recognition/comparison token usage is shown when available; later chat usage is separate. Repeated scans, failures or key/model failover can add attempts. No fixed price per photo is promised.
+
+Photos are sent to Gemini only after **Identify**; confirmation also sends up to six retrieved listing photos for comparison. Normalized reference photos and caches are held in process memory, with a 30-minute lifetime and bounded capacity. Metadata is removed; uploaded photos and reusable reference tokens are not saved in browser search history. Saved results retain the product description and comparison findings. Removing the reference clears its server cache; restarting the server also clears all references. Google/provider retention policies still apply. Closing a scan aborts the browser request but may not cancel an already-sent provider call.
+
+Visually different, similar and unchecked offers use separate valuation pools from likely matches. Lens valuations stay low-confidence until exact product identity and condition are independently established.
+
+This implementation is intended for a trusted local, single-process app. Public deployment needs authentication, user-isolated reference storage, shared quota controls and upload rate limits.
+
 ## Optional services
 
-- `GEMINI_API_KEY`, `GEMINI_API_KEY_2`, `GEMINI_API_KEYS`: optional primary/backup key pool for Gemini intent planning, chat, context and photo analysis. Without any key, local fallbacks run and the UI says `Deterministic mode`.
-- `GEMINI_MODEL`: defaults to `gemini-3.8-flash`. A retired model returning 404/410 is retried once with `GEMINI_FALLBACK_MODEL` (same default), without changing your `.env`. Requests have a 20-second timeout and no automatic SDK retries; local fallbacks remain available.
+- `GEMINI_API_KEY`, `GEMINI_API_KEY_2` through `_5`, `GEMINI_API_KEYS`: optional authorized key pool. A configured key is not proof of a successful AI call. Live results without validated AI evidence remain on hold.
+- `GEMINI_MODEL`: defaults to `gemini-3.8-flash`; `GEMINI_FALLBACK_MODEL` defaults to `gemini-3.6-flash`. Choose models actually available to your project. Requests have bounded timeouts and SDK retries disabled; the shared helper performs only the bounded retries described above.
+- `GEMINI_KEY_PROJECTS`, `GEMINI_LOCAL_RPM`, `GEMINI_LOCAL_RPD`, `GEMINI_MAX_ATTEMPTS`: project-aware local scheduling and retry caps.
+- `AI_OPERATION_BUDGET`, `AI_SHORTLIST_SIZE`, `AI_EVIDENCE_TTL`: per-search attempt cap, analyst batch size and successful evidence cache lifetime.
 - `REEF_API_KEY`: provides reliable live Carousell and Mudah search data.
 - `NEXSCOPE_API_KEY`: provides reliable Shopee Malaysia keyword-search data. Without it, the public-browser attempt may be rejected by Shopee.
 - `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_MARKETPLACE_ID`: official eBay Browse API integration.
@@ -161,7 +203,7 @@ curl -X POST http://127.0.0.1:8000/api/search \
   }'
 ```
 
-Health/config mode is available at `GET /api/health`.
+Health/config mode is available at `GET /api/health`; `ai_configured` is separate from verified provider status. Inspect `agent_run` on search/chat/Lens responses and `GET /api/agents/runtime` for execution evidence. Optional search fields `planning_mode` (`auto`, `local`, `ai`) and `analysis_mode` (`smart`, `local`) allow explicit control; local analysis never claims AI review or emits live buy alerts.
 
 ## Tests
 
