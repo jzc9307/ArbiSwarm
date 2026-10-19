@@ -61,7 +61,7 @@ def offer_id(item):
 
 
 def _fingerprint(item, query, match_mode, role):
-    payload = [2, config.CHEAP_MODEL, ' '.join(query.casefold().split()), match_mode, role, item.model_dump(mode='json')]
+    payload = [3, config.CHEAP_MODEL, config.GEMINI_THINKING_LEVEL, ' '.join(query.casefold().split()), match_mode, role, item.model_dump(mode='json')]
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -102,7 +102,8 @@ def analyze_shortlist(listings: list[Listing], query: str, match_mode='exact', *
         return result
     if not is_enabled():
         result.statuses = {key: 'local_fallback' for key in result.statuses}
-        record(role, 'local_fallback', reason='not_configured')
+        record(role, 'local_fallback', reason='not_configured', error={
+            'state': 'not_configured', 'message': 'No Gemini key loaded. Create a project-root .env on this machine; private .env files are not included in Git.'})
         return result
     pending = []
     now = time.monotonic()
@@ -157,7 +158,7 @@ def analyze_shortlist(listings: list[Listing], query: str, match_mode='exact', *
                      'title': item.title, 'description': item.description[:2500],
                      'condition': item.condition} for item in shortlist]
         batch = call_json(PROMPT, json.dumps({'query': query, 'match_mode': match_mode, 'listings': evidence}, ensure_ascii=False), Findings,
-                          role=role, max_output_tokens=4096)
+                          role=role, max_output_tokens=4096, timeout_ms=config.AI_ANALYSIS_TIMEOUT_MS)
         allowed = {offer_id(item): item for item in shortlist}
         seen = set()
         for finding in batch.findings:
@@ -180,8 +181,12 @@ def analyze_shortlist(listings: list[Listing], query: str, match_mode='exact', *
         record(role, 'findings_validated', count=completed, rejected_or_missing=len(shortlist) - completed)
         if completed:
             record(role, 'ai_completed', count=completed)
+        else:
+            record(role, 'local_fallback', reason='invalid_response', error={
+                'state': 'invalid_response', 'message': 'Gemini responded, but none of its findings passed ID and source-evidence checks. No AI review accepted.'})
     except Exception as exc:
-        record(role, 'local_fallback', reason=failure_status(exc)['state'])
+        error = failure_status(exc)
+        record(role, 'local_fallback', reason=error['state'], error=error)
     finally:
         _batch_lock.release()
     for item in shortlist:

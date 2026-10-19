@@ -1,6 +1,21 @@
 /* Small shared invariants for movable chat and context-bound shortcut drafts. */
 (function (root) {
   const state = {
+    analysisStatus(data = {}) {
+      const status = data.ai_status || {};
+      const labels = {connected:'Gemini reviewed', partial:'AI review partial', skipped:'AI review skipped',
+        not_configured:'Gemini not configured', invalid_request:'AI request rejected', access_denied:'Gemini access denied',
+        rate_limited:'AI rate-limited', budget_limited:'Local AI budget reached', timeout:'AI timed out',
+        unavailable:'AI unavailable', invalid_response:'AI response rejected', output_truncated:'AI output incomplete'};
+      const attempts = data.agent_run?.provider_attempts;
+      const tokens = data.agent_run?.token_usage?.total_token_count;
+      const usage = Number.isFinite(attempts) ? `${attempts} Gemini attempt${attempts === 1 ? '' : 's'}${Number.isFinite(tokens) ? ` · ${tokens.toLocaleString()} reported tokens` : ' · tokens not reported'}` : '';
+      return {
+        label: (labels[status.state] || 'Saved AI status unverified') + (status.code ? ` (${status.code})` : ''),
+        message: [status.message || 'This saved result has no current AI execution status; rerun to verify.', ...(status.configuration_warnings || [])].join(' '),
+        usage,
+      };
+    },
     filterOffers(offers, filters = {}) {
       return offers.filter((offer) => (!filters.markets?.length || filters.markets.includes(offer.marketplace))
         && (!filters.kind || filters.kind === offer.variant_kind)

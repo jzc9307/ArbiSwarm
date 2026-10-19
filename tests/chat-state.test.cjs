@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {clampPosition, draftMatches, filterOffers, filterGroups} = require('../static/chat-state.js');
+const {analysisStatus, clampPosition, draftMatches, filterOffers, filterGroups} = require('../static/chat-state.js');
 
 const savedOffers = [
   {offer_id:'a', marketplace:'carousell',price:200,variant_kind:'building_set',resale_estimate_myr:300},
@@ -47,4 +47,29 @@ test('a shortcut is valid only for its original board, selection and text', () =
   assert.equal(draftMatches(draft, draft.text, board, null), false);
   assert.equal(draftMatches(draft, 'New question', board, draft.offerId), false);
   assert.equal(draftMatches(null, 'A typed question', board, null), true);
+});
+
+test('AI request rejection is visible even if planner marked the old global mode gemini', () => {
+  const result = analysisStatus({ai_mode:'gemini',ai_status:{state:'invalid_request',code:400,message:'AI review did not complete.'},agent_run:{provider_attempts:1,token_usage:null}});
+  assert.equal(result.label,'AI request rejected (400)');
+  assert.match(result.message,/did not complete/);
+  assert.equal(result.usage,'1 Gemini attempt · tokens not reported');
+});
+test('cached work distinguishes zero attempts from zero tokens', () => {
+  const result = analysisStatus({ai_status:{state:'connected',message:'Cached findings reused.'},agent_run:{provider_attempts:0,token_usage:null}});
+  assert.equal(result.label,'Gemini reviewed');
+  assert.equal(result.usage,'0 Gemini attempts · tokens not reported');
+  assert.doesNotMatch(result.usage,/0 reported tokens/);
+});
+test('partial review and provider-reported tokens are labeled separately', () => {
+  const result = analysisStatus({ai_status:{state:'partial',message:'Unreviewed offers stay on hold.'},agent_run:{provider_attempts:1,token_usage:{total_token_count:1056}}});
+  assert.equal(result.label,'AI review partial');
+  assert.match(result.usage,/reported tokens/);
+  assert.match(result.message,/stay on hold/);
+});
+test('old snapshots and configuration warnings never claim verified AI', () => {
+  assert.equal(analysisStatus({ai_mode:'gemini'}).label,'Saved AI status unverified');
+  const result = analysisStatus({ai_status:{state:'not_configured',message:'No key loaded.',configuration_warnings:['Check your local .env.']}});
+  assert.match(result.message,/local .env/);
+  assert.equal(result.label,'Gemini not configured');
 });

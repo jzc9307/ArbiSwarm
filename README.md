@@ -62,7 +62,31 @@ The default API no longer runs a context/vision/strategy LLM chain for every lis
 - `agent_run` reports actual attempted requests, provider responses, cache reuse and server execution events. Tokens are summed from provider metadata only; missing metadata remains unknown, not zero. Failed requests may consume provider quota even when no token metadata is returned.
 - `GET /api/agents/runtime` exposes safe key-slot counts, local scheduler settings and recent runs; it never returns credentials. `POST /api/agents/review` accepts a query and up to three validated listings for an explicitly requested reviewer batch. This endpoint does not send alerts or change financial calculations.
 
-The frontend and its existing response fields are unchanged by this backend refactor. Execution metadata is additive; the existing animated loading percentage is not a live measurement of these server events. The new reviewer endpoint has no new frontend control.
+The existing frontend layout is preserved. Its status text now distinguishes reviewed, partial, skipped, rejected and timed-out analysis, and displays attempted requests plus provider-reported tokens when available. Execution metadata is additive; the existing animated loading percentage is not a live measurement of these server events. The reviewer endpoint has no new frontend control.
+
+### Gemini reliability and diagnosing another computer
+
+The original deeply constrained analyst JSON schema was rejected with HTTP 400. The shared helper now sends a compact, inlined provider schema with a stable required object shape. Strict Pydantic length/count/enum validation and source-quote grounding still happen locally before accepting any finding. The simpler wire schema is not permission to trust malformed or invented output. Rejected requests, truncated/invalid responses, unavailable credentials and timeouts remain distinct, safe error categories; raw provider messages, prompts and credentials are not copied into execution history.
+
+Search status follows the **analyst** (or **vision** for photo search), not merely a successful manager call. A planner success cannot mark a failed listing analysis reviewed. Each `agent_run.stages` entry records accepted/cached work, attempts, responses and unresolved errors for that role. A partial shortlist is explicitly labeled partial; failed/unreviewed offers remain on hold.
+
+Install the updated requirements on each machine. `tzdata` supplies IANA timezones on Windows. If timezone data is still unavailable, the scheduler reports a warning and uses a bounded rolling 24-hour request cap rather than throwing before contacting Gemini. Normal installations use Pacific-midnight resets. These local limits still exclude other applications and reset when the backend restarts.
+
+From the project folder with its virtual environment active:
+
+```bash
+pip install -r requirements.txt
+python scripts/check_gemini.py
+python scripts/check_gemini.py --live
+# Optional explicit deadline for a single attempt (not an extra retry):
+python scripts/check_gemini.py --live --timeout-seconds 60
+```
+
+The first check is configuration-only, with zero provider requests. The explicit `--live` check sends **at most one** small analyst-schema request using synthetic evidence; it never crawls a marketplace, sends alerts or prints keys. Exit code zero with `verified: true`, a successful response and provider token metadata is evidence of a real completed call. A timeout, rejection or missing token metadata is not reported as zero usage or a successful review. Failed requests may still consume provider quota. The check is intended for this trusted local application, not as a public unauthenticated diagnostic endpoint.
+
+Your friend's clone needs its own populated project-root `.env`; this private file is deliberately excluded from Git. Do not overwrite an existing `.env` with the template. Shell variables take precedence and configuration is loaded at startup, so restart after changes. A sixth key in `GEMINI_API_KEYS` is an additional backup, not a sixth role; the scheduler warns when this is unexpected or when project-label counts differ.
+
+`GEMINI_THINKING_LEVEL=low` is the default for routine Gemini 3.8/3.6 Flash extraction; `medium` and `high` are available if needed. Other models retain provider defaults. This reduces reasoning overhead without cutting the output limit so low that reasoning consumes the entire answer budget. Analyst calls and the checker use a configurable `AI_ANALYSIS_TIMEOUT_MS=60000` (10–60 seconds). The checker also accepts `--timeout-seconds` to override an older explicit setting without editing `.env`. The SDK sends the deadline to Google as `X-Server-Timeout`; a 30-second setting can produce a 504 at that deadline. Increasing it gives the same single request more time, not more automatic retries. The checker's configuration counters are captured after the attempt and are still process-local estimates, not Google's usage dashboard. No setting guarantees upstream availability or increases Google quota.
 
 ## Arbi workspace
 

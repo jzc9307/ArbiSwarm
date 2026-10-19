@@ -286,6 +286,7 @@ def chat(req: ChatRequest) -> dict:
         except Exception as exc:
             # A chat service outage does not disable context or useful commands.
             status = failure_status(exc)
+            record('chat', 'local_fallback', reason=status['state'], error=status)
     all_offers = {item.offer_id: item for item in req.context.offers}
     offers = {key:item for key,item in all_offers.items() if req.context.visible_offer_ids is None or key in req.context.visible_offer_ids}
     ids = [key for key in plan.offer_ids if key in offers]

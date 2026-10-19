@@ -266,8 +266,9 @@ def compare(reference: Reference, listings: list, query: str) -> dict:
             _comparisons[cache_key] = (time.monotonic(), {'matches': updates, 'checked': checked})
             _cleanup()
         return {'matches': unchecked, 'checked': checked, 'usage': usage, 'cached': False, 'note': 'Visual resemblance is provisional, not proof of exact identity or authenticity.'}
-    except Exception:
-        record('vision', 'local_fallback', reason='visual_comparison_unavailable')
+    except Exception as exc:
+        error = failure_status(exc)
+        record('vision', 'local_fallback', reason=error['state'], error=error)
         return {'matches': unchecked, 'checked': 0, 'usage': usage, 'cached': False, 'note': 'Visual comparison unavailable. Text results are retained; no visual matches claimed.'}
     finally:
         _scan_lock.release()

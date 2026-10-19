@@ -24,6 +24,10 @@ GEMINI_API_KEYS = tuple(dict.fromkeys(key.strip() for key in [
 ] if key.strip()))
 CHEAP_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.6-flash")
+GEMINI_THINKING_LEVEL = os.environ.get('GEMINI_THINKING_LEVEL', 'low').strip().lower()
+if GEMINI_THINKING_LEVEL not in {'low', 'medium', 'high'}:
+    raise ValueError('GEMINI_THINKING_LEVEL must be low, medium, or high.')
+AI_ANALYSIS_TIMEOUT_MS = max(10000, min(60000, int(os.environ.get('AI_ANALYSIS_TIMEOUT_MS', '60000'))))
 
 # Conservative, process-local free-tier guards. Unlabelled keys share a budget;
 # explicitly label independent Google projects before treating them separately.

@@ -27,7 +27,7 @@ import lens
 
 logger = logging.getLogger("arbiswarm")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-APP_VERSION = "2.6.0"
+APP_VERSION = "2.6.1"
 app = FastAPI(title="ArbiSwarm API", version=APP_VERSION)
 
 
@@ -259,9 +259,11 @@ def search(req: SearchRequest) -> SearchResponse:
                 exc.detail['agent_run'] = run.snapshot()
             raise
         result.agent_run = run.snapshot()
-        result.ai_mode = runtime.mode(result.agent_run)
-        result.ai_status = {'state': 'connected', 'message': 'AI evidence completed or cached AI findings reused.'} if result.ai_mode == 'gemini' else {
-            'state': 'local', 'message': 'Local evidence only in this run; no successful AI analysis is claimed.'}
+        primary = 'vision' if req.lens_reference_id else 'analyst'
+        stage = result.agent_run['stages'].get(primary, {})
+        result.ai_mode = 'gemini' if stage.get('ai_completed') or stage.get('cached_ai_reused') else 'deterministic'
+        result.ai_status = runtime.evidence_status(result.agent_run, primary)
+        result.ai_status['configuration_warnings'] = runtime_status()['configuration_warnings']
         return result
 
 

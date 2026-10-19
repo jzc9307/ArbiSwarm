@@ -199,7 +199,9 @@ def plan_search(query: str, *, use_ai: bool = True) -> SearchIntent:
             if len(_cache) >= 200:
                 _cache.pop(next(iter(_cache)))
             _cache[query.lower()] = (time.monotonic() + 3600, result.model_copy(deep=True))
-    except Exception:
-        record('manager', 'local_fallback', reason='planner_unavailable')
+    except Exception as exc:
+        from agents._llm import failure_status
+        error = failure_status(exc)
+        record('manager', 'local_fallback', reason=error['state'], error=error)
         result.note = 'AI planner unavailable; using local terminology matching, not unrestricted fuzzy results.'
     return result

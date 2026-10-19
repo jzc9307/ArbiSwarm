@@ -685,7 +685,7 @@ async function loadHealth() {
     $('#systemState').classList.add('online');
     const shopee = health.marketplaces?.shopee === 'nexscope_api' ? ' · Shopee API ready' : '';
     const version = health.version ? ` · v${health.version}` : '';
-    $('#systemState span:last-child').textContent = `${health.ai_mode === 'gemini' ? 'AI configured' : 'Deterministic mode'}${shopee}${version}`;
+    $('#systemState span:last-child').textContent = `${health.ai_mode === 'gemini' ? 'Gemini connection verified' : health.ai_configured ? 'Gemini keys loaded · not verified' : 'Gemini not configured'}${shopee}${version}`;
     $('#copilotStatus').textContent = health.ai_status?.message || 'AI connection unverified · local workspace commands available';
   } catch (_) {
     $('#systemState span:last-child').textContent = 'Backend unavailable';
@@ -859,9 +859,10 @@ function renderBoardView() {
   $('#profitMetric').textContent = bestProfit === null ? '—' : formatMoney(bestProfit);
   $('#resultsTitle').textContent = `${data.query} · ${decisions.length} visible offer${decisions.length === 1 ? '' : 's'}`;
   $('#filterStatus').textContent = `${decisions.length} of ${data.decisions.length} saved offers · ${groups.length} group${groups.length === 1 ? '' : 's'}`;
-  $('#resultsExplanation').textContent = `${(data.matching_version || 0) < 3 ? 'Older snapshot: rerun for updated intent matching. ' : ''}${data.search_intent?.note || ''} ${data.match_mode === 'related' ? 'Related variants keep separate valuations. ' : 'Exact-product checks enabled. '}Visible prices follow your filters. Asking-price estimates are not completed sales or authenticity verification.`;
+  const ai = ArbiChatState.analysisStatus(data);
+  $('#resultsExplanation').textContent = `${ai.message} ${(data.matching_version || 0) < 3 ? 'Older snapshot: rerun for updated intent matching. ' : ''}${data.search_intent?.note || ''} ${data.match_mode === 'related' ? 'Related variants keep separate valuations. ' : 'Exact-product checks enabled. '}Visible prices follow your filters. Asking-price estimates are not completed sales or authenticity verification.`;
   const countText = Object.entries(data.source_counts || {}).map(([name, count]) => `${marketplaceName(name)} ${count}`).join(' · ');
-  $('#resultsMeta').textContent = `${countText || providerLabel(data.provider)} · ${data.pricing_mode === 'auto' ? 'market-priced' : 'manual resale'} · ${data.ai_mode === 'gemini' ? 'AI configured · rules decide' : 'rules verified'}`;
+  $('#resultsMeta').textContent = `${countText || providerLabel(data.provider)} · ${data.pricing_mode === 'auto' ? 'market-priced' : 'manual resale'} · ${ai.label}${ai.usage ? ` · ${ai.usage}` : ''}`;
   renderSourceBar(data);
   window.ArbiLens?.renderBoard(data);
   results.replaceChildren();

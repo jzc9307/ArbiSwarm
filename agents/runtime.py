@@ -56,7 +56,51 @@ class AgentRun:
             'token_usage': usage,
             'usage_complete': bool(usage) and all(value is not None for value in usage.values()),
             'events': events,
+            'stages': stage_statuses(events),
         }
+
+
+def stage_statuses(events):
+    """Accepted work per role, not a global 'one agent ran' success flag."""
+    stages = {}
+    for role in ('manager', 'analyst', 'vision', 'reviewer', 'chat'):
+        rows = [row for row in events if row['agent'] == role]
+        if not rows:
+            continue
+        accepted = [i for i, row in enumerate(rows) if row['status'] in {'ai_completed', 'cache_reused'}]
+        failures = [i for i, row in enumerate(rows) if row['status'] in {'request_failed', 'local_fallback'}]
+        last_failure = rows[failures[-1]] if failures else {}
+        error = last_failure.get('error')
+        if error is None and failures:
+            error = {'state': last_failure.get('reason', 'unavailable'),
+                     'message': 'This stage did not complete a validated AI review.'}
+        partial = any(row.get('outside_shortlist', 0) or row.get('rejected_or_missing', 0) for row in rows)
+        unresolved = bool(failures and (not accepted or failures[-1] > accepted[-1]))
+        state = ('partial' if unresolved or partial else 'completed') if accepted else ('failed' if failures else 'skipped')
+        stages[role] = {
+            'state': state,
+            'ai_completed': any(row['status'] == 'ai_completed' for row in rows),
+            'cached_ai_reused': any(row['status'] == 'cache_reused' for row in rows),
+            'provider_attempts': sum(row['status'] == 'request_started' for row in rows),
+            'successful_provider_responses': sum(row['status'] == 'provider_response' for row in rows),
+            'error': error if unresolved else None,
+        }
+    return stages
+
+
+def evidence_status(report, role='analyst'):
+    stage = report.get('stages', {}).get(role, {})
+    accepted = stage.get('ai_completed') or stage.get('cached_ai_reused')
+    if accepted:
+        partial = stage.get('state') == 'partial'
+        return {'state': 'partial' if partial else 'connected', 'role': role,
+                'message': 'AI review is partial. Unreviewed or failed offers remain on hold.' if partial else 'AI evidence review completed or validated cached findings reused.',
+                'error': stage.get('error')}
+    if stage.get('error'):
+        return {**stage['error'], 'role': role,
+                'message': 'Marketplace results may be available, but AI evidence review did not complete. ' + stage['error']['message']}
+    return {'state': 'skipped', 'role': role,
+            'message': 'No new AI evidence review: local/demo mode, no eligible candidates, or no usable photos. No AI buy recommendation is claimed.'}
 
 
 def record(agent, status, **details):
